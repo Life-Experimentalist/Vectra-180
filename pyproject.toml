@@ -1,0 +1,128 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "vectra-180"
+dynamic = ["version"]
+description = "Dual-fisheye dashcam and stereoscopic depth engine for the Raspberry Pi Compute Module 5"
+readme = "README.md"
+# tomllib is stdlib from 3.11, and Raspberry Pi OS Bookworm ships 3.11.
+requires-python = ">=3.11"
+license = "Apache-2.0"
+license-files = ["LICENSE.md"]
+authors = [{ name = "Life Experimentalist" }]
+keywords = [
+    "dashcam",
+    "stereo-vision",
+    "depth-map",
+    "fisheye",
+    "raspberry-pi",
+    "compute-module-5",
+    "opencv",
+    "imu",
+    "telemetry",
+]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: MacOS",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Multimedia :: Video :: Capture",
+    "Topic :: Scientific/Engineering :: Image Processing",
+    "Typing :: Typed",
+]
+dependencies = [
+    "opencv-contrib-python>=4.9.0",
+    "numpy>=1.24.0",
+]
+
+[project.optional-dependencies]
+# The DearPyGui console is a development and desk-testing tool. A headless Pi
+# must never be made to install a GUI toolkit to record video.
+desktop = ["dearpygui>=1.11.1"]
+
+[project.urls]
+Homepage = "https://life-experimentalist.github.io/Vectra-180/"
+Repository = "https://github.com/Life-Experimentalist/Vectra-180"
+Issues = "https://github.com/Life-Experimentalist/Vectra-180/issues"
+Changelog = "https://github.com/Life-Experimentalist/Vectra-180/blob/main/CHANGELOG.md"
+
+[project.scripts]
+vectra180 = "vectra180.cli:main"
+
+[tool.hatch.version]
+path = "src/vectra180/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/vectra180"]
+
+[tool.hatch.build.targets.sdist]
+include = ["src/vectra180", "tests", "deploy", "docs", "README.md", "LICENSE.md", "CHANGELOG.md"]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "pytest-cov>=5.0",
+    "ruff>=0.6",
+    "mypy>=1.11",
+    "pre-commit>=3.7",
+    "dearpygui>=1.11.1",
+]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 120
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+# flake8-type-checking (TC) is deliberately absent: numpy and cv2 are imported
+# at runtime by the engine regardless, so quarantining them behind TYPE_CHECKING
+# would add boilerplate to every module and save nothing.
+select = ["E", "W", "F", "I", "N", "UP", "B", "A", "SIM", "RUF"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+[tool.ruff.lint.isort]
+known-first-party = ["vectra180"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--tb=short -q --cov=vectra180 --cov-report=term-missing"
+markers = [
+    "hardware: needs a camera attached; deselected by default in CI",
+    "integration: drives several subsystems together against real files and sockets",
+]
+
+[tool.coverage.run]
+branch = true
+source = ["src/vectra180"]
+
+[tool.coverage.report]
+exclude_also = [
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+    "\\.\\.\\.",
+    # Reached only by `python -m vectra180`, which the suite exercises as a real
+    # subprocess -- and a subprocess reports its coverage nowhere.
+    "if __name__ == .__main__.:",
+]
+
+[tool.mypy]
+# 3.12 rather than the 3.11 floor: NumPy 2.5's stubs use `type` aliases, which
+# mypy refuses to parse under an earlier target. Actual 3.11 compatibility is
+# proven by the test matrix, which runs on 3.11.
+python_version = "3.12"
+warn_return_any = true
+warn_unused_configs = true
+ignore_missing_imports = true

@@ -1,0 +1,49 @@
+# Run Vectra-180 in a container, for development and desk testing.
+#
+#   VECTRA_SERVER_TOKEN=$(python3 -c "import secrets;print(secrets.token_urlsafe(32))") \
+#     docker compose up --build
+#
+# On a Raspberry Pi, use the systemd service in deploy/ instead. See deploy/README.md.
+
+services:
+  vectra180:
+    build:
+      context: .
+    image: vectra180:local
+    restart: unless-stopped
+
+    # The camera, and only the camera. `privileged: true` would hand the
+    # container every device on the host, which is a great deal more than
+    # reading one video node requires.
+    devices:
+      - "/dev/video0:/dev/video0"
+
+    volumes:
+      # Footage outlives the container. Create it first and give it to uid 1000,
+      # which is the unprivileged user inside the image:
+      #   mkdir -p ./recordings && sudo chown 1000:44 ./recordings
+      - ./recordings:/recordings
+      # Optional: mount a config file over the defaults.
+      # - ./deploy/config.example.toml:/etc/vectra180/config.toml:ro
+
+    # Published to the host, so the token is not optional. Compose refuses to
+    # start without one rather than quietly exposing the footage.
+    ports:
+      - "127.0.0.1:8080:8080"
+
+    environment:
+      VECTRA_SERVER_TOKEN: ${VECTRA_SERVER_TOKEN:?set VECTRA_SERVER_TOKEN before starting}
+      VECTRA_RECORDING_DIR: /recordings
+      # Match your camera. `v4l2-ctl --list-formats-ext` on the host says what
+      # it really supports; the defaults here are one 720p eye per side.
+      VECTRA_CAPTURE_WIDTH: "2560"
+      VECTRA_CAPTURE_HEIGHT: "720"
+      VECTRA_CAPTURE_FPS: "30"
+
+    # Writes video continuously, so give it somewhere fast to buffer and keep
+    # the container from taking the host down with it if something runs away.
+    tmpfs:
+      - /tmp
+    mem_limit: 2g
+
+    command: ["run"]

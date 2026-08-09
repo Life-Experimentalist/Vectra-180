@@ -1,0 +1,94 @@
+name: Bug report
+description: Something behaves differently from how it is documented.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Most problems are visible in `vectra180 doctor`. Please run it first —
+        it exercises the real capture, encode and storage path, and its output
+        usually says which of the eight checks is unhappy.
+
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you expected, and what you got instead.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: How to reproduce
+      description: The exact commands, in order.
+      placeholder: |
+        1. vectra180 run --config /etc/vectra180/config.toml
+        2. Drive for about ten minutes
+        3. The clip at 14:32 is zero bytes
+      render: text
+    validations:
+      required: true
+
+  - type: textarea
+    id: doctor
+    attributes:
+      label: Output of `vectra180 doctor`
+      description: Paste the whole thing, not just the failing line.
+      render: text
+    validations:
+      required: true
+
+  - type: textarea
+    id: config
+    attributes:
+      label: Output of `vectra180 config`
+      description: >
+        This prints the effective configuration after defaults, the file, the
+        VECTRA_* environment and the command line have all been merged. Redact
+        `server.token` before pasting.
+      render: toml
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: "`vectra180 --version`"
+      placeholder: "1.0.0"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Where it runs
+      options:
+        - Raspberry Pi CM5 (CM5 IO board)
+        - Raspberry Pi 5
+        - Raspberry Pi 4
+        - Other Linux
+        - Windows
+        - macOS
+        - Docker
+    validations:
+      required: true
+
+  - type: input
+    id: camera
+    attributes:
+      label: Camera
+      description: >
+        The model, and the line it shows as in `v4l2-ctl --list-devices`
+        (or `vectra180 devices`).
+      placeholder: "ELP dual-lens USB3.0, [0] 3D USB Camera (/dev/video0)"
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: >
+        On a Pi: `journalctl -u vectra180 -n 200 --no-pager`. Twenty relevant
+        lines beat two thousand.
+      render: text

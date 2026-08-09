@@ -1,0 +1,100 @@
+[Unit]
+Description=Vectra-180 dashcam
+Documentation=https://github.com/Life-Experimentalist/Vectra-180
+
+# Clip filenames come from the wall clock, so a box that boots believing it is
+# 1970 produces a card full of clips dated 1970. This target is satisfied by an
+# RTC or by fake-hwclock, neither of which needs a network -- which matters in
+# a car, where there may not be one. See deploy/README.md on fitting an RTC.
+After=time-set.target
+Wants=time-set.target
+
+# The camera is USB and may still be enumerating when this starts. That is not
+# a failure: the capture loop reopens a missing device every
+# camera.reconnect_delay seconds for as long as the service runs.
+After=network.target
+
+# A dashcam that gives up is a dashcam that was not running during the one
+# drive that mattered. A burst of 0 disables the rate limiter outright, so
+# systemd keeps retrying however many times it has already failed.
+StartLimitBurst=0
+
+[Service]
+Type=simple
+User=vectra
+Group=vectra
+# /dev/video* is owned by root:video on Raspberry Pi OS.
+SupplementaryGroups=video
+
+ExecStart=/opt/vectra180/venv/bin/vectra180 run --config /etc/vectra180/config.toml
+WorkingDirectory=/var/lib/vectra180
+
+# SIGTERM finalises the open segment rather than leaving a truncated file, so
+# an ordinary `systemctl stop` loses nothing. There is no reload: changing the
+# config means restarting, which costs one segment boundary.
+KillSignal=SIGTERM
+TimeoutStopSec=30
+Restart=always
+RestartSec=5
+
+# Recording is real-time work with a hard deadline: a frame that arrives late
+# is a frame that is gone. This keeps it ahead of everything else on the box
+# without the starvation risk of a genuine realtime scheduling class.
+Nice=-5
+IOSchedulingClass=best-effort
+IOSchedulingPriority=2
+
+# Python buffers stdout when it is not a terminal, which strands every log line
+# short of the journal until the buffer fills.
+Environment=PYTHONUNBUFFERED=1
+# OpenCV spawns one worker per core for operations this pipeline does not use,
+# and on a four-core CM5 that contention costs more than it buys.
+Environment=OPENCV_NUM_THREADS=2
+
+# -- sandboxing -------------------------------------------------------------
+#
+# The service reads one config file, writes one directory and listens on one
+# socket. Everything else is denied.
+#
+# IMPORTANT: if you move recording.directory somewhere else -- a USB SSD under
+# /media, say -- add it here too, or the service will be unable to write to it:
+#
+#   systemctl edit vectra180
+#   [Service]
+#   ReadWritePaths=/media/vectra/footage
+
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/vectra180
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+RemoveIPC=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
+CapabilityBoundingSet=
+
+# PrivateDevices is deliberately NOT set: it would replace /dev with a minimal
+# private instance and hide the camera. The allow-list below is the narrower
+# form of the same idea -- video4linux and nothing else. systemd still permits
+# its usual harmless set (/dev/null, /dev/zero, /dev/urandom and friends).
+DeviceAllow=char-video4linux rw
+
+# MemoryDenyWriteExecute is likewise absent. CPython's ctypes builds closures
+# through libffi, which needs writable-then-executable pages, and more than one
+# wheel in the dependency tree uses it at import time.
+
+[Install]
+WantedBy=multi-user.target

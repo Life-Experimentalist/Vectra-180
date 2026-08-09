@@ -1,0 +1,59 @@
+name: Pages
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "site/**"
+      - "install.sh"
+      - "install.ps1"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One deployment at a time, and never cancel one halfway -- a cancelled
+# deployment can leave the live site on a partial upload.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy site
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Assemble the artifact
+        run: |
+          mkdir -p _site
+          cp -r site/. _site/
+          # The bootstrap scripts are served from the site root so the one-liner
+          # in the README is a single curl away.
+          cp install.sh install.ps1 _site/
+          # Without this, Pages runs the tree through Jekyll and drops anything
+          # whose name starts with an underscore.
+          touch _site/.nojekyll
+
+      - name: The site is static HTML, not a JS bundle
+        run: |
+          # The whole point of hand-written HTML is that a crawler sees the
+          # content in the first response. If index.html ever stops containing
+          # real prose, that has silently stopped being true.
+          test -s _site/index.html
+          grep -q "Vectra-180" _site/index.html
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+      - id: deploy
+        uses: actions/deploy-pages@v4

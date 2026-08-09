@@ -1,0 +1,22 @@
+# Normalise line endings in the repository to LF.
+#
+# This project ships shell scripts and a systemd unit that are executed on a
+# Raspberry Pi. A CRLF line ending in install-pi.sh turns the shebang into a
+# command that does not exist, and the failure message points nowhere useful --
+# so the checked-in form is LF regardless of who commits from where.
+* text=auto eol=lf
+
+# Never touched: byte-for-byte or not at all.
+*.png binary
+*.jpg binary
+*.mp4 binary
+*.mkv binary
+*.ico binary
+
+# Windows-only entry points, which genuinely want CRLF.
+*.ps1 text eol=crlf
+*.bat text eol=crlf
+
+# Keep generated lockfiles and vendored assets out of language statistics and
+# out of diffs that nobody reads.
+uv.lock linguist-generated=true

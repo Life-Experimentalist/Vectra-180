@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+	<meta charset="utf-8" />
+	<meta name="viewport" content="width=device-width, initial-scale=1" />
+	<title>Not found — Vectra-180</title>
+	<meta name="description" content="That page does not exist on the Vectra-180 site." />
+	<meta name="robots" content="noindex" />
+	<meta name="theme-color" content="#0b0f19" media="(prefers-color-scheme: dark)" />
+	<meta name="theme-color" content="#f6f8fc" media="(prefers-color-scheme: light)" />
+	<meta name="color-scheme" content="dark light" />
+	<link rel="icon" href="icon.svg" type="image/svg+xml" />
+	<link rel="stylesheet" href="styles.css" />
+	<script>
+		document.documentElement.classList.add("js");
+		try {
+			var t = localStorage.getItem("vectra-theme");
+			if (t === "light" || t === "dark") document.documentElement.dataset.theme = t;
+		} catch (e) { }
+	</script>
+</head>
+
+<body>
+	<main class="wrap" style="min-height:82vh;display:grid;place-content:center;text-align:center;gap:.4rem">
+		<svg viewBox="0 0 220 120" width="220" height="120" style="margin:0 auto 1.4rem" role="img"
+			aria-label="Two fisheye lens circles, the right one dark and empty.">
+			<circle cx="70" cy="60" r="42" fill="none" stroke="#00f2fe" stroke-width="2" opacity="0.55" />
+			<circle cx="70" cy="60" r="26" fill="none" stroke="#00f2fe" stroke-width="1.4" opacity="0.35" />
+			<circle cx="70" cy="60" r="7" fill="#00f2fe" opacity="0.8" />
+			<circle cx="150" cy="60" r="42" fill="none" stroke="#2b3550" stroke-width="2" stroke-dasharray="6 5" />
+			<path d="M138 48l24 24M162 48l-24 24" stroke="#2b3550" stroke-width="2" stroke-linecap="round" />
+		</svg>
+
+		<p class="eyebrow" style="justify-content:center">HTTP 404</p>
+		<h1 style="font-size:clamp(1.8rem,1.2rem+2.6vw,2.8rem)">One lens came back empty</h1>
+		<p style="color:var(--muted);max-width:44ch;margin-inline:auto">
+			There is nothing at that address. The site is a single page — everything lives on it, or in the
+			documentation on GitHub.
+		</p>
+
+		<div class="hero-cta" style="justify-content:center;margin-top:1.4rem">
+			<a class="btn btn-primary" href="./">Back to the front page</a>
+			<a class="btn" href="https://github.com/Life-Experimentalist/Vectra-180">Open the repository</a>
+		</div>
+	</main>
+</body>
+
+</html>

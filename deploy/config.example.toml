@@ -1,0 +1,226 @@
+# Vectra-180 configuration
+#
+# Copy to /etc/vectra180/config.toml. Every key below is optional: what is not
+# set here keeps its built-in default, so a file containing nothing but the two
+# or three lines you actually want to change is a perfectly good config.
+#
+# Precedence, lowest to highest:
+#
+#   built-in defaults  ->  this file  ->  VECTRA_* environment variables
+#                                     ->  command-line flags
+#
+# `vectra180 config` prints the effective result of all four, in this same
+# format, which makes it the fastest way to see what the service is really
+# running with. `vectra180 config --path` also reports which file was read.
+
+# ---------------------------------------------------------------------------
+[camera]
+# ---------------------------------------------------------------------------
+
+# Device index, used when `device` is empty. The first camera is 0.
+index = 0
+
+# An explicit device path, which overrides `index` when set. Prefer a
+# by-id path on a Pi: /dev/video0 is assigned in enumeration order and moves
+# when a second UVC device is plugged in, while the by-id link does not.
+#
+#   ls -l /dev/v4l/by-id/
+#
+# device = "/dev/v4l/by-id/usb-YourVendor_Dual_Fisheye-video-index0"
+device = ""
+
+# Capture geometry. This is the *side-by-side* frame the module emits, so the
+# width covers both eyes: 2560x720 is 1280x720 per eye.
+width = 2560
+height = 720
+fps = 30
+
+# Capture backend. "auto" picks V4L2 on Linux and DirectShow on Windows.
+# Override only to diagnose: "v4l2", "dshow", "msmf", "any".
+backend = "auto"
+
+# Pixel format requested from the camera. MJPG is what makes 2560x720 at 30 fps
+# fit through USB 2.0 bandwidth; YUYV at this size negotiates down to ~5 fps.
+fourcc = "MJPG"
+
+# Seconds to wait before reopening a camera that disappeared. A loose USB plug
+# in a car is normal wear, not a fatal error.
+reconnect_delay = 2.0
+
+# Consecutive failed reads before the device is considered gone and reopened.
+read_failure_limit = 30
+
+# ---------------------------------------------------------------------------
+[telemetry]
+# ---------------------------------------------------------------------------
+
+# Decode the ICM42688 IMU block the module embeds in the leftmost pixel
+# columns. Turning this off costs the horizon overlay and the g-sensor;
+# recording is unaffected. Modules without an IMU are detected automatically,
+# so there is no need to set this for them.
+enabled = true
+
+# Width of the metadata strip, in pixels. Those columns are cropped off every
+# recorded frame. Run `vectra180 decode <frame.png>` on a still from your own
+# camera if you are unsure what yours uses.
+metadata_width = 30
+
+# Exponential smoothing on the raw gyro rates: higher is steadier and laggier.
+smoothing_alpha = 0.92
+
+# Complementary filter weight. This is how much the gyro is trusted against
+# gravity from the accelerometer; 0.98 is the usual starting point.
+complementary_alpha = 0.98
+
+# Seconds over which unreferenced yaw decays back to zero. Yaw has no gravity
+# reference to correct it, so without a leak it drifts without bound.
+yaw_leak_seconds = 20.0
+
+# How far total acceleration may sit from 1 g and still be treated as a
+# trustworthy gravity reading. Wider accepts more road noise as "level".
+gravity_tolerance_g = 0.25
+
+# ---------------------------------------------------------------------------
+[recording]
+# ---------------------------------------------------------------------------
+
+# The dashcam's primary duty. Turn it off only to use the live view alone.
+enabled = true
+
+# Where footage is written. Two subdirectories are created inside it:
+# `normal/` for the loop and `events/` for protected clips.
+#
+# On a Pi this should be a partition you are willing to write to continuously.
+# Recording to the SD card the OS boots from will wear it out; a USB SSD or a
+# dedicated card is the usual arrangement.
+directory = "/var/lib/vectra180/recordings"
+
+# Length of each clip, in seconds. A power cut costs at most one segment, so
+# shorter loses less; longer means fewer files and marginally less overhead.
+segment_seconds = 60
+
+# Total budget for ordinary footage, in bytes. Once past it the oldest clips
+# are deleted to make room. 32 GiB by default.
+max_bytes = 34359738368
+
+# Pruning also runs when the filesystem falls below this much free space, so a
+# card shared with anything else cannot be filled to a standstill. 2 GiB.
+min_free_bytes = 2147483648
+
+# Separate budget for incident clips, in bytes. Ordinary pruning never touches
+# these; they are only reclaimed once they exceed this on their own. 8 GiB.
+max_event_bytes = 8589934592
+
+# Container. "mp4" plays everywhere; "mkv" survives an interrupted write
+# better, at the cost of some players not opening it.
+container = "mp4"
+
+# "auto" uses ffmpeg when it is on PATH and falls back to OpenCV's writer.
+# Force with "ffmpeg" or "opencv". ffmpeg gives smaller files at the same
+# quality and is worth installing.
+encoder = "auto"
+
+# libx264 preset. The CM5 has no hardware H.264 encoder, so this is entirely
+# CPU work on the Cortex-A76 cores: "ultrafast" and "superfast" are the only
+# realistic choices at 2560x720, and anything slower will drop frames.
+preset = "ultrafast"
+
+# Target bitrate in kbit/s. 8000 is a reasonable 2560x720 dashcam figure;
+# raise it if number plates are not legible on playback.
+bitrate_kbps = 8000
+
+# Write a JSON sidecar of IMU samples beside each clip. This is where the
+# telemetry survives -- the video pixels do not carry it once the metadata
+# strip is cropped.
+write_telemetry_sidecar = true
+
+# Burn the wall-clock time into the recorded pixels. Container metadata does
+# not survive a re-encode, a screenshot or a messaging app; the pixels do,
+# which is what makes footage useful to anyone else after an incident.
+burn_timestamp = true
+
+# ---------------------------------------------------------------------------
+[incident]
+# ---------------------------------------------------------------------------
+
+# Move clips out of the pruning pool when the g-sensor fires.
+enabled = true
+
+# Deviation from 1 g, in g, that counts as an impact. Detection uses total
+# acceleration rather than any single axis, so it does not depend on how the
+# module is angled in your vehicle.
+#
+# Lower catches more: 0.35-0.45 will also trigger on hard braking and speed
+# bumps, which fills `events/` quickly. Raise it if you get false positives.
+threshold_g = 0.6
+
+# Ignore further triggers for this long. An impact rings the accelerometer for
+# hundreds of milliseconds; without a cooldown one event would lock a whole
+# run of segments.
+cooldown_seconds = 10.0
+
+# Also protect the segment recorded immediately *before* the trigger. The
+# run-up to a collision is usually the part that matters, and by the time the
+# g-sensor fires that footage is in the file that just closed.
+lock_previous_segment = true
+
+# ---------------------------------------------------------------------------
+[depth]
+# ---------------------------------------------------------------------------
+#
+# Stereo depth is computed only when something asks for it -- the /depth.jpg
+# endpoint or the desktop panel -- never in the recording path. Nothing here
+# affects what gets written to the card.
+
+# Width each eye is downscaled to before matching. Cost is roughly quadratic
+# in this, so it is the first thing to lower on a busy Pi.
+working_width = 640
+
+# Disparity search range, in pixels. Must be a multiple of 16. Larger sees
+# closer objects and costs proportionally more.
+num_disparities = 80
+
+# SGBM matching window. Odd, 3 or greater. Larger is smoother and blunter.
+block_size = 7
+
+# Margin by which the best match must beat the runner-up, as a percentage.
+# Higher rejects more ambiguous pixels, leaving holes instead of noise.
+uniqueness_ratio = 10
+
+# Focal length as a fraction of the working width, used to turn disparity into
+# metres. Calibrate against a known distance if you need real units.
+focal_scale = 0.5
+
+# ---------------------------------------------------------------------------
+[server]
+# ---------------------------------------------------------------------------
+
+# The headless web interface: live view, clip browser, download, lock.
+enabled = true
+
+# Bind address. The default reaches only this machine.
+#
+# Recorded footage is sensitive. Setting this to 0.0.0.0 publishes every clip
+# to everyone on the network, so it is an explicit opt-in -- and if you do it,
+# set `token` below as well. On a car's hotspot you are sharing a network with
+# whatever else is connected to it.
+host = "127.0.0.1"
+port = 8080
+
+# Shared secret required on every request except /healthz, either as
+# `Authorization: Bearer <token>` or `?token=<token>`. Empty disables
+# authentication, which is only safe on loopback.
+#
+# Generate one with:  python3 -c "import secrets; print(secrets.token_urlsafe(32))"
+token = ""
+
+# JPEG quality of the preview, 1-100. This affects the live view only; it has
+# nothing to do with recording quality.
+preview_quality = 70
+
+# Preview frame rate. Kept well under the capture rate so that someone
+# watching from a phone cannot starve the recorder.
+preview_fps = 10
+
+# Longest edge of the preview image, in pixels. Lower it for a slow link.
+preview_width = 960

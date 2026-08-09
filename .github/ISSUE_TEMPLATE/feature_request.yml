@@ -1,0 +1,43 @@
+name: Feature request
+description: Something the project should do and does not.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        One thing worth knowing before you write: the first duty is that clips
+        keep being written. Anything that competes with the encoder for CPU on a
+        board with no hardware H.264 has to earn its place, and anything that
+        could stop a recording will be turned down however good it is otherwise.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What are you trying to do that you currently cannot?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you would like it to do
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: What you tried instead
+      description: >
+        Existing settings, a script around the HTTP API, a different tool —
+        and why they fell short.
+
+  - type: checkboxes
+    id: constraints
+    attributes:
+      label: Constraints
+      options:
+        - label: This runs on the recording path (as opposed to on demand, or offline)
+        - label: This needs a new dependency
+        - label: I am willing to open the pull request

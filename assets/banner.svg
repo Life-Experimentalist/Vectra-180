@@ -1,0 +1,71 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 260" width="100%" height="100%">
+  <defs>
+    <!-- Background Gradient -->
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0B0F19" />
+      <stop offset="100%" stop-color="#1E2640" />
+    </linearGradient>
+
+    <!-- Electric Cyan Sensor Gradient -->
+    <linearGradient id="cyanGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#00F2FE" />
+      <stop offset="100%" stop-color="#4FACFE" />
+    </linearGradient>
+
+    <!-- Glow Filter for AI/Depth effect -->
+    <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="6" result="blur" />
+      <feComposite in="SourceGraphic" in2="blur" operator="over" />
+    </filter>
+  </defs>
+
+  <!-- Dark Mode Background Banner -->
+  <rect width="800" height="260" rx="16" fill="url(#bgGrad)" />
+  <rect width="798" height="258" x="1" y="1" rx="15" fill="none" stroke="#334155" stroke-width="2" />
+
+  <!-- ========================================== -->
+  <!-- LOGO ICON: DUAL SENSOR & DEPTH VECTOR     -->
+  <!-- ========================================== -->
+  <g transform="translate(60, 40)">
+    <!-- Left Lens (Fisheye 1) -->
+    <circle cx="70" cy="90" r="50" fill="none" stroke="#334155" stroke-width="6" stroke-dasharray="8 4" />
+    <circle cx="70" cy="90" r="35" fill="none" stroke="url(#cyanGrad)" stroke-width="4" opacity="0.8" />
+    <circle cx="70" cy="90" r="8" fill="#00F2FE" filter="url(#glow)" />
+
+    <!-- Right Lens (Fisheye 2) -->
+    <circle cx="150" cy="90" r="50" fill="none" stroke="#334155" stroke-width="6" stroke-dasharray="8 4" />
+    <circle cx="150" cy="90" r="35" fill="none" stroke="url(#cyanGrad)" stroke-width="4" opacity="0.8" />
+    <circle cx="150" cy="90" r="8" fill="#00F2FE" filter="url(#glow)" />
+
+    <!-- Center Triangulation Vector (The Road / Depth Horizon) -->
+    <path d="M 30,150 L 110,40 L 190,150" fill="none" stroke="url(#cyanGrad)" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" filter="url(#glow)" />
+    <path d="M 60,110 L 110,40 L 160,110" fill="none" stroke="#FFFFFF" stroke-width="2" opacity="0.5" />
+    
+    <!-- Horizon Line -->
+    <line x1="20" y1="90" x2="200" y2="90" stroke="#00F2FE" stroke-width="2" opacity="0.4" stroke-dasharray="4 4" />
+  </g>
+
+  <!-- ========================================== -->
+  <!-- TYPOGRAPHY & BRANDING                      -->
+  <!-- ========================================== -->
+  <g transform="translate(310, 115)">
+    <!-- Primary Brand Name -->
+    <text x="0" y="0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif" font-size="64" font-weight="900" fill="#FFFFFF" letter-spacing="4">
+      VECTRA<tspan fill="url(#cyanGrad)">180</tspan>
+    </text>
+
+    <!-- Subtitle / Project Description -->
+    <text x="4" y="38" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="14" font-weight="600" fill="#94A3B8" letter-spacing="6">
+      DUAL-FISHEYE DASHCAM &#183; PI CM5
+    </text>
+
+    <!-- Technical Tagline -->
+    <text x="4" y="70" font-family="monospace" font-size="12" fill="#00F2FE" opacity="0.7">
+      [ UVC DUAL FISHEYE // LOOP RECORD // DEPTH ON DEMAND ]
+    </text>
+  </g>
+
+  <!-- Decorative Tech Borders -->
+  <line x1="314" y1="135" x2="720" y2="135" stroke="#334155" stroke-width="1" />
+  <circle cx="720" cy="135" r="3" fill="#00F2FE" />
+</svg>

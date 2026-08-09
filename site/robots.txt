@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://life-experimentalist.github.io/Vectra-180/sitemap.xml

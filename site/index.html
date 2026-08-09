@@ -1,0 +1,1382 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+	<meta charset="utf-8" />
+	<meta name="viewport" content="width=device-width, initial-scale=1" />
+
+	<title>Vectra-180 — a dual-fisheye dashcam for the Raspberry Pi Compute Module 5</title>
+	<meta name="description"
+		content="Vectra-180 turns a Raspberry Pi CM5 and a dual-fisheye USB camera into a dashcam: continuous loop recording, IMU incident lock, a web interface for your phone, and stereoscopic depth on demand. Open source, Apache 2.0." />
+	<link rel="canonical" href="https://life-experimentalist.github.io/Vectra-180/" />
+	<meta name="author" content="Life Experimentalist" />
+	<meta name="theme-color" content="#0b0f19" media="(prefers-color-scheme: dark)" />
+	<meta name="theme-color" content="#f6f8fc" media="(prefers-color-scheme: light)" />
+	<meta name="color-scheme" content="dark light" />
+
+	<meta property="og:type" content="website" />
+	<meta property="og:site_name" content="Vectra-180" />
+	<meta property="og:title" content="Vectra-180 — a dual-fisheye dashcam for the Raspberry Pi CM5" />
+	<meta property="og:description"
+		content="Continuous loop recording, IMU incident lock, a web interface for your phone, and stereoscopic depth on demand. Runs headless on a Compute Module 5. Apache 2.0." />
+	<meta property="og:url" content="https://life-experimentalist.github.io/Vectra-180/" />
+	<meta property="og:image" content="https://life-experimentalist.github.io/Vectra-180/og.png" />
+	<meta property="og:image:width" content="1200" />
+	<meta property="og:image:height" content="630" />
+	<meta property="og:image:alt" content="Vectra-180 — dual-fisheye dashcam for the Raspberry Pi CM5" />
+	<meta property="og:locale" content="en" />
+
+	<meta name="twitter:card" content="summary_large_image" />
+	<meta name="twitter:title" content="Vectra-180 — a dual-fisheye dashcam for the Raspberry Pi CM5" />
+	<meta name="twitter:description"
+		content="Loop recording, incident lock, a phone-friendly web interface, and depth on demand. Headless on a CM5. Apache 2.0." />
+	<meta name="twitter:image" content="https://life-experimentalist.github.io/Vectra-180/og.png" />
+
+	<link rel="icon" href="icon.svg" type="image/svg+xml" />
+	<link rel="apple-touch-icon" href="icon.svg" />
+	<link rel="manifest" href="manifest.webmanifest" />
+	<link rel="stylesheet" href="styles.css" />
+
+	<script type="application/ld+json">
+	{
+		"@context": "https://schema.org",
+		"@graph": [
+			{
+				"@type": "SoftwareApplication",
+				"@id": "https://life-experimentalist.github.io/Vectra-180/#software",
+				"name": "Vectra-180",
+				"applicationCategory": "MultimediaApplication",
+				"applicationSubCategory": "Dashcam",
+				"operatingSystem": "Linux, macOS, Windows",
+				"softwareVersion": "1.0.0",
+				"url": "https://life-experimentalist.github.io/Vectra-180/",
+				"downloadUrl": "https://pypi.org/project/vectra-180/",
+				"codeRepository": "https://github.com/Life-Experimentalist/Vectra-180",
+				"programmingLanguage": "Python",
+				"license": "https://www.apache.org/licenses/LICENSE-2.0",
+				"description": "A dual-fisheye dashcam for the Raspberry Pi Compute Module 5. Continuous loop recording with a size and free-space budget, IMU-triggered incident lock, a self-contained web interface, and stereoscopic depth computed on demand.",
+				"featureList": [
+					"Continuous loop recording into fixed-length segments",
+					"IMU incident detection and clip locking",
+					"Telemetry decoding and JSON sidecars",
+					"Self-contained web interface with live MJPEG preview",
+					"Panoramic fisheye dewarp on request",
+					"Stereoscopic depth map on demand",
+					"Eight-check hardware diagnostic"
+				],
+				"offers": {
+					"@type": "Offer",
+					"price": "0",
+					"priceCurrency": "USD"
+				},
+				"author": {
+					"@type": "Organization",
+					"name": "Life Experimentalist",
+					"url": "https://github.com/Life-Experimentalist"
+				}
+			},
+			{
+				"@type": "WebSite",
+				"@id": "https://life-experimentalist.github.io/Vectra-180/#website",
+				"url": "https://life-experimentalist.github.io/Vectra-180/",
+				"name": "Vectra-180",
+				"inLanguage": "en",
+				"about": { "@id": "https://life-experimentalist.github.io/Vectra-180/#software" }
+			},
+			{
+				"@type": "FAQPage",
+				"@id": "https://life-experimentalist.github.io/Vectra-180/#faq",
+				"mainEntity": [
+					{
+						"@type": "Question",
+						"name": "Do I need a Raspberry Pi Compute Module 5?",
+						"acceptedAnswer": {
+							"@type": "Answer",
+							"text": "No. Nothing in Vectra-180 is CM5-specific. It runs on any Linux, macOS or Windows machine with a UVC camera. The CM5 is simply the board it was built around, because it is the one that fits in a car."
+						}
+					},
+					{
+						"@type": "Question",
+						"name": "Which camera does it need?",
+						"acceptedAnswer": {
+							"@type": "Answer",
+							"text": "A dual-fisheye USB (UVC) camera that delivers both views side by side in a single frame. Vectra-180 splits that frame down the middle. A single-lens webcam records fine, but the panorama and the depth map both need two lenses."
+						}
+					},
+					{
+						"@type": "Question",
+						"name": "Does the depth map slow down recording?",
+						"acceptedAnswer": {
+							"@type": "Answer",
+							"text": "No. Depth is computed on an HTTP handler thread, only when a request asks for one, never per frame. Recording runs on its own thread behind a bounded queue. A depth request can cost you a preview frame; it cannot cost you recorded footage."
+						}
+					},
+					{
+						"@type": "Question",
+						"name": "What happens when the SD card fills up?",
+						"acceptedAnswer": {
+							"@type": "Answer",
+							"text": "Loop footage is pruned oldest-first against two limits: a total size budget and a free-space floor. Clips locked by an incident live in a separate directory with its own budget that the loop pruner never touches. Only files matching Vectra-180's own naming pattern are ever deleted."
+						}
+					},
+					{
+						"@type": "Question",
+						"name": "Does my camera actually contain an IMU?",
+						"acceptedAnswer": {
+							"@type": "Answer",
+							"text": "Some dual-fisheye modules embed a 20-byte accelerometer and gyroscope block in a narrow metadata strip on the left of each frame, and some do not. Run 'vectra180 doctor' to find out. Without one you lose automatic incident detection; recording, preview, panorama, depth and the web interface all work exactly the same."
+						}
+					},
+					{
+						"@type": "Question",
+						"name": "Is it safe to expose the web interface?",
+						"acceptedAnswer": {
+							"@type": "Answer",
+							"text": "It binds to 127.0.0.1 by default. Binding to a network address requires setting an auth token as well — 'vectra180 doctor' fails, not warns, if the service is public without one, because otherwise anyone on the network could download and delete your footage."
+						}
+					}
+				]
+			}
+		]
+	}
+	</script>
+
+	<script>
+		/* Two things that must happen before the first paint: mark that JS is
+		 * alive (so scroll-reveal is allowed to hide things -- without this a
+		 * crawler or a no-JS reader would get a blank page), and restore the
+		 * chosen theme so there is no flash of the wrong one. */
+		document.documentElement.classList.add("js");
+		try {
+			var t = localStorage.getItem("vectra-theme");
+			if (t === "light" || t === "dark") document.documentElement.dataset.theme = t;
+		} catch (e) { /* private mode; the OS preference still applies */ }
+	</script>
+</head>
+
+<body>
+	<a class="skip" href="#main">Skip to content</a>
+
+	<header class="nav" id="nav">
+		<div class="wrap nav-in">
+			<a class="brand" href="#top">
+				<img src="icon.svg" alt="" width="30" height="30" />
+				<span>Vectra<b>180</b></span>
+			</a>
+			<nav aria-label="Sections">
+				<ul class="nav-links">
+					<li><a href="#how">How it works</a></li>
+					<li><a href="#features">Features</a></li>
+					<li><a href="#install">Install</a></li>
+					<li><a href="#interface">Interface</a></li>
+					<li><a href="#hardware">Hardware</a></li>
+					<li><a href="#docs">Docs</a></li>
+				</ul>
+			</nav>
+			<button class="icon-btn" id="theme" type="button" aria-label="Switch between light and dark theme">
+				<svg class="moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+					stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+					<path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z" />
+				</svg>
+				<svg class="sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+					stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+					<circle cx="12" cy="12" r="4" />
+					<path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" />
+				</svg>
+			</button>
+			<a class="btn" href="https://github.com/Life-Experimentalist/Vectra-180">
+				<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+					<path
+						d="M12 .5a12 12 0 0 0-3.8 23.4c.6.1.8-.3.8-.6v-2c-3.3.7-4-1.6-4-1.6-.6-1.4-1.4-1.8-1.4-1.8-1.1-.7.1-.7.1-.7 1.2.1 1.9 1.2 1.9 1.2 1.1 1.9 2.9 1.3 3.6 1 .1-.8.4-1.3.8-1.6-2.7-.3-5.5-1.3-5.5-5.9 0-1.3.5-2.4 1.2-3.2-.1-.3-.5-1.5.1-3.2 0 0 1-.3 3.3 1.2a11.5 11.5 0 0 1 6 0C17.7 5.1 18.7 5.4 18.7 5.4c.7 1.7.3 2.9.1 3.2.8.8 1.2 1.9 1.2 3.2 0 4.6-2.8 5.6-5.5 5.9.4.4.8 1.1.8 2.2v3.3c0 .3.2.7.8.6A12 12 0 0 0 12 .5z" />
+				</svg>
+				<span>GitHub</span>
+			</a>
+		</div>
+	</header>
+
+	<main id="main">
+
+		<!-- ============================================================ hero -->
+		<section class="hero" id="top">
+			<div class="wrap hero-grid">
+				<div>
+					<a class="pill" href="https://github.com/Life-Experimentalist/Vectra-180/releases">
+						<em>v1.0.0</em>
+						<span>First stable release · Apache 2.0</span>
+					</a>
+
+					<h1>A dashcam that <span class="grad">sees in two eyes</span>.</h1>
+
+					<p class="lede">
+						Vectra-180 turns a Raspberry Pi Compute Module 5 and a dual-fisheye USB camera into a dashcam
+						that records continuously, protects the footage around an impact, and serves the whole thing to
+						your phone over Wi-Fi. Because the camera has two lenses a fixed distance apart, it can also
+						compute a depth map — but only when you ask for one.
+					</p>
+
+					<div class="hero-cta">
+						<a class="btn btn-primary" href="#install">
+							<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+								stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+								<path d="M12 3v12M7 11l5 5 5-5M4 20h16" />
+							</svg>
+							<span>Install in one line</span>
+						</a>
+						<a class="btn" href="#how">
+							<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+								stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+								<path d="M4 17V7M9 17V11M14 17V4M19 17v-6" />
+							</svg>
+							<span>See how it works</span>
+						</a>
+					</div>
+
+					<ul class="hero-facts">
+						<li>Runs headless as a systemd service</li>
+						<li>Python 3.11+</li>
+						<li>No web framework, no cloud, no account</li>
+					</ul>
+				</div>
+
+				<div>
+					<figure class="demo" style="margin:0">
+						<div class="demo-bar">
+							<span class="dot live" aria-hidden="true"></span>
+							<span>VECTRA-180 · dual fisheye → dewarped</span>
+						</div>
+						<div class="demo-stage">
+							<!-- The poster is the default and the fallback in one. If WebGL is
+							     unavailable, or JS never runs, this is the picture. -->
+							<svg class="fallback" viewBox="0 0 640 360" preserveAspectRatio="xMidYMid slice"
+								role="img" aria-label="Two fisheye circles side by side above a road horizon, the raw frame a dual-fisheye camera delivers.">
+								<defs>
+									<linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+										<stop offset="0" stop-color="#0d2233" />
+										<stop offset="1" stop-color="#123b4d" />
+									</linearGradient>
+									<radialGradient id="lensg">
+										<stop offset="0" stop-color="#0b1a26" />
+										<stop offset="0.72" stop-color="#0a1420" />
+										<stop offset="1" stop-color="#050810" />
+									</radialGradient>
+								</defs>
+								<rect width="640" height="360" fill="#05080f" />
+								<rect width="640" height="360" fill="url(#sky)" opacity="0.55" />
+								<g>
+									<circle cx="168" cy="180" r="132" fill="url(#lensg)" />
+									<circle cx="472" cy="180" r="132" fill="url(#lensg)" />
+									<g stroke="#00f2fe" fill="none" opacity="0.5">
+										<circle cx="168" cy="180" r="132" stroke-width="1.5" />
+										<circle cx="472" cy="180" r="132" stroke-width="1.5" />
+										<circle cx="168" cy="180" r="88" stroke-width="0.8" opacity="0.4" />
+										<circle cx="472" cy="180" r="88" stroke-width="0.8" opacity="0.4" />
+										<circle cx="168" cy="180" r="44" stroke-width="0.8" opacity="0.28" />
+										<circle cx="472" cy="180" r="44" stroke-width="0.8" opacity="0.28" />
+									</g>
+									<path d="M36 180a132 132 0 0 0 264 0" fill="#0a1c14" opacity="0.85" />
+									<path d="M340 180a132 132 0 0 0 264 0" fill="#0a1c14" opacity="0.85" />
+									<g stroke="#00f2fe" stroke-width="1.2" opacity="0.45">
+										<path d="M36 180h264" />
+										<path d="M340 180h264" />
+									</g>
+									<g stroke="#4facfe" stroke-width="2" opacity="0.55" fill="none">
+										<path d="M120 312q48-84 96 0" />
+										<path d="M424 312q48-84 96 0" />
+									</g>
+								</g>
+								<text x="320" y="345" fill="#5c7183" font-family="monospace" font-size="12"
+									text-anchor="middle">2560 × 720 · MJPG · 30 fps</text>
+							</svg>
+							<canvas id="demo-canvas" aria-hidden="true"></canvas>
+							<div class="demo-hud" aria-hidden="true">
+								<span id="hud-left">SYNTHETIC SCENE · NOT FOOTAGE</span>
+								<span id="hud-right">FOV 180° · DEWARP 0%</span>
+							</div>
+						</div>
+						<div class="demo-controls">
+							<label for="morph">Dewarp</label>
+							<input id="morph" type="range" min="0" max="100" value="0"
+								aria-label="Blend between the raw dual-fisheye frame and the dewarped view" />
+							<span id="morph-val" style="font-family:var(--mono);font-size:.7rem;min-width:7.5rem">raw
+								frame</span>
+						</div>
+					</figure>
+					<p class="demo-note">
+						A live shader running the same equidistant fisheye projection
+						(<code>r&nbsp;=&nbsp;f·θ</code>) the dewarper uses. Drag the slider. The scene is synthetic —
+						it is the maths that is real.
+					</p>
+				</div>
+			</div>
+		</section>
+
+		<!-- ========================================================== rules -->
+		<section id="rules">
+			<div class="wrap">
+				<div class="section-head reveal">
+					<span class="eyebrow">Two rules</span>
+					<h2>Everything else follows from these</h2>
+					<p>
+						Read them first and the rest of the codebase stops being surprising. They are not slogans —
+						each one is a constraint that decided how the threads are arranged.
+					</p>
+				</div>
+
+				<div class="rules reveal-stagger">
+					<article class="rule" data-n="01" style="--i:0">
+						<h3>Recording is the duty</h3>
+						<p>
+							Preview, depth, the panorama and the web interface are optional. Footage is not. Anything
+							expensive is pushed off the capture thread, so a viewer, a slow card or a depth request
+							can cost you a preview frame — never a recorded one.
+						</p>
+					</article>
+					<article class="rule" data-n="02" style="--i:1">
+						<h3>The frame carries the clock</h3>
+						<p>
+							Every frame arrives stamped with both a monotonic time and a wall time. Pacing and segment
+							length use the monotonic one because it cannot jump; filenames and sidecars use the wall
+							one. A Pi with no RTC leaps forward the moment NTP settles, and that leap must not cut a
+							clip in half.
+						</p>
+					</article>
+				</div>
+			</div>
+		</section>
+
+		<!-- ========================================================== howto -->
+		<section id="how">
+			<div class="wrap">
+				<div class="section-head reveal">
+					<span class="eyebrow">Architecture</span>
+					<h2>One thread owns the camera</h2>
+					<p>
+						Its loop is short on purpose — read, decode the telemetry strip, hand the frame to the
+						recorder, publish it for viewers — and everything else hangs off the side.
+					</p>
+				</div>
+
+				<figure class="figure reveal">
+					<svg class="diagram" viewBox="0 0 980 440" role="img"
+						aria-label="Pipeline diagram. The camera feeds CameraSource, which feeds strip_metadata. That splits into the telemetry decoder — which feeds the incident detector and the orientation filter — and the published frame, which feeds the segment recorder and then the clips on disk. The incident detector locks the current segment. Below a divider, on HTTP handler threads, the published frame and the orientation filter feed the preview, panorama and depth renderers, which feed the HTTP service.">
+						<defs>
+							<marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6"
+								orient="auto-start-reverse">
+								<path d="M0 0 10 5 0 10z" fill="currentColor" />
+							</marker>
+						</defs>
+
+						<!-- band 1 -->
+						<g class="d-legend">
+							<text x="14" y="18">CAPTURE THREAD — must never stall</text>
+						</g>
+
+						<g class="d-edge" color="var(--line-2)" marker-end="url(#ah)">
+							<path d="M140 144H155" />
+							<path d="M296 144H311" />
+							<path d="M468 136C482 136 482 62 489 62" />
+							<path d="M468 152C482 152 482 176 489 176" />
+							<path d="M648 52C670 52 670 30 678 30" />
+							<path d="M648 72C670 72 670 88 678 88" />
+							<path d="M648 176H678" />
+							<path d="M842 176H853" />
+						</g>
+						<g class="d-edge-hot" marker-end="url(#ah)" color="var(--cyan)">
+							<path d="M767 52V142" />
+						</g>
+						<text class="d-sub" x="773" y="102">lock</text>
+
+						<!-- animated packets along the recording path -->
+						<path class="d-flow" d="M140 144H311M296 144H468M468 152C482 152 482 176 489 176M648 176H853" />
+
+						<g>
+							<rect class="d-box" x="14" y="118" width="126" height="52" rx="9" />
+							<text class="d-label" x="77" y="141" text-anchor="middle">Dual-fisheye</text>
+							<text class="d-label" x="77" y="157" text-anchor="middle">USB camera</text>
+
+							<rect class="d-box-hot" x="162" y="118" width="134" height="52" rx="9" />
+							<text class="d-label" x="229" y="141" text-anchor="middle">CameraSource</text>
+							<text class="d-sub" x="229" y="157" text-anchor="middle">capture/source.py</text>
+
+							<rect class="d-box-hot" x="318" y="118" width="150" height="52" rx="9" />
+							<text class="d-label" x="393" y="141" text-anchor="middle">strip_metadata</text>
+							<text class="d-sub" x="393" y="157" text-anchor="middle">imaging/layout.py</text>
+
+							<rect class="d-box-hot" x="496" y="36" width="152" height="52" rx="9" />
+							<text class="d-label" x="572" y="59" text-anchor="middle">TelemetryDecoder</text>
+							<text class="d-sub" x="572" y="75" text-anchor="middle">telemetry/decoder.py</text>
+
+							<rect class="d-box" x="678" y="8" width="164" height="44" rx="9" />
+							<text class="d-label" x="760" y="35" text-anchor="middle">IncidentDetector</text>
+
+							<rect class="d-box" x="678" y="66" width="164" height="44" rx="9" />
+							<text class="d-label" x="760" y="93" text-anchor="middle">OrientationFilter</text>
+
+							<rect class="d-box-hot" x="496" y="150" width="152" height="52" rx="9" />
+							<text class="d-label" x="572" y="173" text-anchor="middle">published frame</text>
+							<text class="d-sub" x="572" y="189" text-anchor="middle">engine.py</text>
+
+							<rect class="d-box-hot" x="678" y="150" width="164" height="52" rx="9" />
+							<text class="d-label" x="760" y="173" text-anchor="middle">SegmentRecorder</text>
+							<text class="d-sub" x="760" y="189" text-anchor="middle">bounded queue → ffmpeg</text>
+
+							<rect class="d-box-hot" x="864" y="150" width="104" height="52" rx="9" />
+							<text class="d-label" x="916" y="173" text-anchor="middle">clips +</text>
+							<text class="d-label" x="916" y="189" text-anchor="middle">sidecars</text>
+						</g>
+
+						<!-- divider -->
+						<line x1="14" y1="238" x2="966" y2="238" stroke="var(--line)" stroke-width="1"
+							stroke-dasharray="3 5" />
+						<text class="d-legend" x="14" y="262">HTTP HANDLER THREADS — only while someone is
+							watching</text>
+
+						<!-- band 2 -->
+						<g class="d-edge-cold" marker-end="url(#ah)" color="var(--line-2)">
+							<path d="M572 202C572 258 520 276 487 297" />
+							<path d="M678 88C664 88 664 104 664 122V266C664 284 604 290 566 297" />
+							<path d="M600 326H673" />
+						</g>
+
+						<g>
+							<rect class="d-box" x="380" y="300" width="220" height="52" rx="9" />
+							<text class="d-label" x="490" y="323" text-anchor="middle">preview · panorama · depth</text>
+							<text class="d-sub" x="490" y="339" text-anchor="middle">computed per request</text>
+
+							<rect class="d-box" x="678" y="300" width="180" height="52" rx="9" />
+							<text class="d-label" x="768" y="323" text-anchor="middle">HTTP service</text>
+							<text class="d-sub" x="768" y="339" text-anchor="middle">service/app.py</text>
+						</g>
+
+						<g class="d-legend">
+							<line x1="14" y1="396" x2="44" y2="396" class="d-edge-hot" />
+							<text x="52" y="400">the path a recorded frame takes</text>
+							<line x1="272" y1="396" x2="302" y2="396" class="d-edge-cold" />
+							<text x="310" y="400">optional, and cancellable without losing footage</text>
+						</g>
+					</svg>
+					<figcaption>
+						Solid edges are the capture thread. Dashed edges run on HTTP handler threads, only while
+						someone is watching. Nothing on the dashed side can block the solid side.
+					</figcaption>
+				</figure>
+
+				<div class="grid g-3 reveal-stagger" style="margin-top:2rem">
+					<article class="card" style="--i:0">
+						<div class="ico" aria-hidden="true">
+							<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+								stroke-linecap="round" stroke-linejoin="round">
+								<path d="M4 6h16v12H4z" />
+								<path d="M9 12h6" />
+							</svg>
+						</div>
+						<h3>Read</h3>
+						<p>
+							The source hands back a <code>Frame</code> carrying the image, a monotonic timestamp and a
+							wall clock. If the camera browns out over a bump it reconnects on its own and keeps going.
+						</p>
+					</article>
+					<article class="card" style="--i:1">
+						<div class="ico" aria-hidden="true">
+							<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+								stroke-linecap="round" stroke-linejoin="round">
+								<path d="M3 4h4v16H3zM10 8h11M10 12h11M10 16h7" />
+							</svg>
+						</div>
+						<h3>Split</h3>
+						<p>
+							The narrow metadata strip is cut off the left edge and handed to the telemetry decoder. The
+							picture that remains is what everything else sees.
+						</p>
+					</article>
+					<article class="card" style="--i:2">
+						<div class="ico" aria-hidden="true">
+							<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+								stroke-linecap="round" stroke-linejoin="round">
+								<path d="M12 3v10M8 9l4 4 4-4" />
+								<path d="M4 15v4h16v-4" />
+							</svg>
+						</div>
+						<h3>Hand off</h3>
+						<p>
+							The frame goes into a queue holding about two seconds of footage. If the encoder falls
+							behind, the frame is dropped and counted — the camera is never made to wait.
+						</p>
+					</article>
+				</div>
+			</div>
+		</section>
+
+		<!-- ========================================================== frame -->
+		<section id="frame">
+			<div class="wrap">
+				<div class="section-head reveal">
+					<span class="eyebrow">Frame layout</span>
+					<h2>Twenty bytes hidden in the picture</h2>
+					<p>
+						Some dual-fisheye modules embed an accelerometer and gyroscope reading in a narrow strip down
+						the left edge of every frame — one byte per row, in the first pixel column. Vectra-180 decodes
+						it, filters it into roll, pitch and yaw, and writes it to a JSON sidecar next to the clip.
+					</p>
+				</div>
+
+				<figure class="figure reveal">
+					<svg class="diagram" viewBox="0 0 900 300" role="img"
+						aria-label="Diagram of one camera frame: a narrow 30-pixel metadata strip on the far left, then the left fisheye view, then the right fisheye view, together 2560 by 720 pixels. An inset shows the strip's first pixel column carrying one byte per row, twenty bytes in total: an 8-byte timestamp, then three accelerometer words and three gyroscope words.">
+						<!-- the frame -->
+						<rect class="d-box" x="58" y="34" width="784" height="172" rx="6" />
+
+						<rect class="fa-strip fa-strip-pulse" x="60" y="36" width="24" height="168" />
+
+						<rect class="fa-eye" x="86" y="36" width="377" height="168" />
+						<rect class="fa-eye" x="465" y="36" width="377" height="168" />
+						<line x1="464" y1="36" x2="464" y2="204" stroke="var(--line-2)" stroke-width="1"
+							stroke-dasharray="4 4" />
+
+						<g class="fa-lens">
+							<circle cx="274" cy="120" r="76" />
+							<circle cx="274" cy="120" r="50" opacity="0.6" />
+							<circle cx="274" cy="120" r="24" opacity="0.4" />
+							<circle cx="653" cy="120" r="76" />
+							<circle cx="653" cy="120" r="50" opacity="0.6" />
+							<circle cx="653" cy="120" r="24" opacity="0.4" />
+						</g>
+
+						<text class="d-label" x="274" y="124" text-anchor="middle" opacity="0.85">left eye</text>
+						<text class="d-label" x="653" y="124" text-anchor="middle" opacity="0.85">right eye</text>
+
+						<!-- dimensions -->
+						<g class="fa-dim">
+							<path d="M60 220v10M84 220v10M60 225h24" />
+							<path d="M86 220v10M842 220v10M86 225h756" />
+						</g>
+						<text class="fa-dim-t" x="72" y="248">30 px</text>
+						<text class="fa-dim-t" x="464" y="248">2530 px of picture · 720 tall</text>
+						<text class="fa-dim-t" x="72" y="262">strip</text>
+
+						<!-- inset: the first column -->
+						<g transform="translate(58,268)">
+							<text class="d-sub" x="0" y="10">first pixel column, top to bottom →</text>
+						</g>
+						<g transform="translate(360,258)">
+							<g>
+								<rect class="fa-strip" x="0" y="0" width="14" height="14" />
+								<rect class="fa-strip" x="16" y="0" width="14" height="14" />
+								<rect class="fa-strip" x="32" y="0" width="14" height="14" />
+								<rect class="fa-strip" x="48" y="0" width="14" height="14" />
+								<rect class="fa-strip" x="64" y="0" width="14" height="14" />
+								<rect class="fa-strip" x="80" y="0" width="14" height="14" />
+								<rect class="fa-strip" x="96" y="0" width="14" height="14" />
+								<rect class="fa-strip" x="112" y="0" width="14" height="14" />
+							</g>
+							<text class="d-sub" x="63" y="26" text-anchor="middle">timestamp µs (8, LE)</text>
+							<g opacity="0.85">
+								<rect class="fa-eye" x="134" y="0" width="14" height="14" />
+								<rect class="fa-eye" x="150" y="0" width="14" height="14" />
+								<rect class="fa-eye" x="166" y="0" width="14" height="14" />
+								<rect class="fa-eye" x="182" y="0" width="14" height="14" />
+								<rect class="fa-eye" x="198" y="0" width="14" height="14" />
+								<rect class="fa-eye" x="214" y="0" width="14" height="14" />
+							</g>
+							<text class="d-sub" x="180" y="26" text-anchor="middle">accel x/y/z (6, BE)</text>
+							<g opacity="0.85">
+								<rect class="fa-eye" x="236" y="0" width="14" height="14" />
+								<rect class="fa-eye" x="252" y="0" width="14" height="14" />
+								<rect class="fa-eye" x="268" y="0" width="14" height="14" />
+								<rect class="fa-eye" x="284" y="0" width="14" height="14" />
+								<rect class="fa-eye" x="300" y="0" width="14" height="14" />
+								<rect class="fa-eye" x="316" y="0" width="14" height="14" />
+							</g>
+							<text class="d-sub" x="282" y="26" text-anchor="middle">gyro x/y/z (6, BE)</text>
+						</g>
+					</svg>
+					<figcaption>
+						The strip is cropped away before anything is recorded — a clip contains the two eyes and
+						nothing else. The 30-pixel default is configurable, and <code>vectra180 decode</code> will tell
+						you what your camera actually uses.
+					</figcaption>
+				</figure>
+
+				<div class="grid g-3 reveal-stagger" style="margin-top:2rem">
+					<article class="card" style="--i:0">
+						<h3>It is checked, not trusted</h3>
+						<p>
+							Ordinary image data can look like a plausible payload. A sample is accepted only once a
+							second frame continues its timeline, which costs one frame of startup latency and rejects
+							essentially every false positive.
+						</p>
+					</article>
+					<article class="card" style="--i:1">
+						<h3>Filtered, not integrated</h3>
+						<p>
+							Gyro rates are integrated for responsiveness and corrected toward gravity when the
+							accelerometer is actually measuring gravity rather than cornering force. Yaw is bled to
+							zero, because without a magnetometer it is a turn rate, not a compass.
+						</p>
+					</article>
+					<article class="card" style="--i:2">
+						<h3>Written down</h3>
+						<p>
+							Every clip gets a <code>.json</code> sidecar with the frame count, the true duration
+							measured from the frame clock, and the telemetry samples that arrived while it was open.
+						</p>
+					</article>
+				</div>
+			</div>
+		</section>
+
+		<!-- ======================================================= features -->
+		<section id="features">
+			<div class="wrap">
+				<div class="section-head reveal">
+					<span class="eyebrow">What it does</span>
+					<h2>Built to be left alone in a car</h2>
+					<p>
+						Every one of these exists because of something that goes wrong in a vehicle: power that sags,
+						cards that fill, clocks that jump, cameras that drop off the bus.
+					</p>
+				</div>
+
+				<div class="grid g-3 reveal-stagger">
+					<article class="card" style="--i:0">
+						<div class="ico" aria-hidden="true">
+							<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+								stroke-linecap="round" stroke-linejoin="round">
+								<path d="M12 3a9 9 0 1 0 9 9" />
+								<path d="M12 7v5l3 2" />
+							</svg>
+						</div>
+						<h3>Loop recording</h3>
+						<p>
+							Fixed-length segments into a loop directory, pruned oldest-first against a size budget and
+							a free-space floor. Only files matching its own naming pattern are ever deleted — your
+							files on the same card are invisible to it.
+						</p>
+					</article>
+
+					<article class="card" style="--i:1">
+						<div class="ico" aria-hidden="true">
+							<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+								stroke-linecap="round" stroke-linejoin="round">
+								<rect x="4" y="10" width="16" height="11" rx="2" />
+								<path d="M8 10V7a4 4 0 0 1 8 0v3" />
+							</svg>
+						</div>
+						<h3>Incident lock</h3>
+						<p>
+							The IMU trips a configurable threshold and the clip containing the moment moves to
+							<code>events/</code>, where the loop pruner cannot reach it. A button in the web interface
+							does the same thing by hand.
+						</p>
+					</article>
+
+					<article class="card" style="--i:2">
+						<div class="ico" aria-hidden="true">
+							<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+								stroke-linecap="round" stroke-linejoin="round">
+								<path d="M3 12h4l3-7 4 14 3-7h4" />
+							</svg>
+						</div>
+						<h3>Telemetry sidecars</h3>
+						<p>
+							Acceleration, rotation and derived attitude, sampled per frame and written as JSON beside
+							every clip. The clip is evidence; the sidecar is the argument.
+						</p>
+					</article>
+
+					<article class="card" style="--i:3">
+						<div class="ico" aria-hidden="true">
+							<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+								stroke-linecap="round" stroke-linejoin="round">
+								<rect x="5" y="2" width="14" height="20" rx="3" />
+								<path d="M11 18h2" />
+							</svg>
+						</div>
+						<h3>Web interface</h3>
+						<p>
+							Live MJPEG preview, a clip browser with range-request downloads, a storage meter and a lock
+							button — one self-contained page served from the Pi. No internet, no account, no app.
+						</p>
+					</article>
+
+					<article class="card" style="--i:4">
+						<div class="ico" aria-hidden="true">
+							<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+								stroke-linecap="round" stroke-linejoin="round">
+								<path d="M2 12c4-6 8-6 10 0s6 6 10 0" />
+								<circle cx="12" cy="12" r="2" />
+							</svg>
+						</div>
+						<h3>Panoramic view</h3>
+						<p>
+							Both eyes dewarped, joined and levelled against the horizon — on request. Clips stay raw,
+							because the raw frame is the closest thing to what the sensors saw.
+						</p>
+					</article>
+
+					<article class="card" style="--i:5">
+						<div class="ico" aria-hidden="true">
+							<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+								stroke-linecap="round" stroke-linejoin="round">
+								<path d="M3 20h18M6 20V9M11 20V4M16 20v-8M21 20v-5" />
+							</svg>
+						</div>
+						<h3>Depth on demand</h3>
+						<p>
+							Stereo disparity from the two lenses, computed per request rather than per frame. Useful
+							for parking and for arguing about distance after the fact; never in the way of recording.
+						</p>
+					</article>
+
+					<article class="card" style="--i:6">
+						<div class="ico" aria-hidden="true">
+							<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+								stroke-linecap="round" stroke-linejoin="round">
+								<path d="M9 12l2 2 4-5" />
+								<circle cx="12" cy="12" r="9" />
+							</svg>
+						</div>
+						<h3>Honest diagnostics</h3>
+						<p>
+							<code>vectra180 doctor</code> runs eight checks against the real capture and encode path,
+							and prints the command that fixes each failure. It exits non-zero, so a provisioning script
+							can depend on it.
+						</p>
+					</article>
+
+					<article class="card" style="--i:7">
+						<div class="ico" aria-hidden="true">
+							<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+								stroke-linecap="round" stroke-linejoin="round">
+								<path d="M12 3l8 4v6c0 4-3.5 7-8 8-4.5-1-8-4-8-8V7z" />
+							</svg>
+						</div>
+						<h3>Locked down by default</h3>
+						<p>
+							Binds to <code>127.0.0.1</code>, refuses to go public without a token, compares tokens in
+							constant time, blocks cross-origin writes, and serves the UI under a
+							<code>default-src 'self'</code> policy.
+						</p>
+					</article>
+
+					<article class="card" style="--i:8">
+						<div class="ico" aria-hidden="true">
+							<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+								stroke-linecap="round" stroke-linejoin="round">
+								<path d="M4 6h16M4 12h16M4 18h10" />
+							</svg>
+						</div>
+						<h3>Clean shutdown</h3>
+						<p>
+							<kbd>Ctrl</kbd>+<kbd>C</kbd> and <code>systemctl stop</code> both finalise the open segment
+							and write its sidecar, rather than leaving a truncated file behind.
+						</p>
+					</article>
+				</div>
+			</div>
+		</section>
+
+		<!-- ======================================================== install -->
+		<section id="install">
+			<div class="wrap">
+				<div class="section-head reveal">
+					<span class="eyebrow">Install</span>
+					<h2>Four ways in</h2>
+					<p>
+						The Pi installer is the one that matters: it creates an unprivileged service user, installs
+						into <code>/opt/vectra180</code>, and starts on boot.
+					</p>
+				</div>
+
+				<div class="reveal">
+					<div class="tabs" role="tablist" aria-label="Installation methods">
+						<button role="tab" id="t-pi" aria-controls="p-pi" aria-selected="true">Raspberry Pi</button>
+						<button role="tab" id="t-pypi" aria-controls="p-pypi" aria-selected="false">PyPI</button>
+						<button role="tab" id="t-docker" aria-controls="p-docker"
+							aria-selected="false">Docker</button>
+						<button role="tab" id="t-src" aria-controls="p-src" aria-selected="false">From source</button>
+					</div>
+
+					<div class="tabpanel" id="p-pi" role="tabpanel" aria-labelledby="t-pi">
+						<h3>Raspberry Pi</h3>
+						<div class="code">
+							<div class="code-head">
+								<span>Raspberry Pi OS Bookworm · aarch64</span>
+								<span class="grow"></span>
+								<button class="copy" type="button">copy</button>
+							</div>
+							<pre><code><span class="tok-c"># clone, then run the installer as root</span>
+<span class="tok-k">git</span> clone https://github.com/Life-Experimentalist/Vectra-180.git \
+  <span class="tok-f">&amp;&amp;</span> <span class="tok-k">sudo</span> ./Vectra-180/deploy/install-pi.sh
+
+<span class="tok-c"># check the machine over before trusting it</span>
+<span class="tok-k">sudo</span> -u vectra /opt/vectra180/venv/bin/vectra180 <span class="tok-k">doctor</span></code></pre>
+						</div>
+						<p class="panel-note">
+							The service listens on <code>127.0.0.1:8080</code> by default. Reaching it from a phone
+							needs a bind address <em>and</em> a token — not one or the other. The
+							<a href="https://github.com/Life-Experimentalist/Vectra-180/blob/main/deploy/README.md">deployment
+								runbook</a> covers camera choice, storage, ignition wiring and thermals.
+						</p>
+					</div>
+
+					<div class="tabpanel" id="p-pypi" role="tabpanel" aria-labelledby="t-pypi">
+						<h3>PyPI</h3>
+						<div class="code">
+							<div class="code-head">
+								<span>any Linux, macOS or Windows machine with a UVC camera</span>
+								<span class="grow"></span>
+								<button class="copy" type="button">copy</button>
+							</div>
+							<pre><code><span class="tok-k">pip</span> install vectra-180
+
+<span class="tok-c"># optional desktop control panel -- leave this off on a Pi</span>
+<span class="tok-k">pip</span> install <span class="tok-s">"vectra-180[desktop]"</span></code></pre>
+						</div>
+						<p class="panel-note">
+							Two runtime dependencies: OpenCV and NumPy. <code>ffmpeg</code> is used for encoding when
+							it is on <code>PATH</code>, and there is an OpenCV fallback writer when it is not.
+						</p>
+					</div>
+
+					<div class="tabpanel" id="p-docker" role="tabpanel" aria-labelledby="t-docker">
+						<h3>Docker</h3>
+						<div class="code">
+							<div class="code-head">
+								<span>ghcr.io/life-experimentalist/vectra-180</span>
+								<span class="grow"></span>
+								<button class="copy" type="button">copy</button>
+							</div>
+							<pre><code><span class="tok-k">docker</span> run --rm <span class="tok-f">--device</span> /dev/video0 \
+  <span class="tok-f">-p</span> 127.0.0.1:8080:8080 \
+  <span class="tok-f">-v</span> vectra-footage:/recordings \
+  <span class="tok-f">-e</span> VECTRA_SERVER_TOKEN=choose-a-secret \
+  ghcr.io/life-experimentalist/vectra-180:1.0.0</code></pre>
+						</div>
+						<p class="panel-note">
+							Publishing the port to anything but <code>127.0.0.1</code> puts your footage on the
+							network, so set a token first. The bundled <code>docker-compose.yml</code> builds locally
+							with the same guards and refuses to start without a token at all.
+						</p>
+					</div>
+
+					<div class="tabpanel" id="p-src" role="tabpanel" aria-labelledby="t-src">
+						<h3>From source</h3>
+						<div class="code">
+							<div class="code-head">
+								<span>development environment</span>
+								<span class="grow"></span>
+								<button class="copy" type="button">copy</button>
+							</div>
+							<pre><code><span class="tok-k">git</span> clone https://github.com/Life-Experimentalist/Vectra-180.git
+<span class="tok-k">cd</span> Vectra-180 <span class="tok-f">&amp;&amp;</span> ./install.sh   <span class="tok-c"># install.ps1 on Windows</span>
+
+<span class="tok-k">make</span> gate      <span class="tok-c"># lint, typecheck, full suite -- exactly what CI runs</span></code></pre>
+						</div>
+						<p class="panel-note">
+							Both installers bootstrap <a href="https://docs.astral.sh/uv/">uv</a>, sync the
+							environment, install the pre-commit hooks and run the checks. The suite runs without a
+							camera and without a display.
+						</p>
+					</div>
+				</div>
+			</div>
+		</section>
+
+		<!-- ========================================================= doctor -->
+		<section id="doctor">
+			<div class="wrap">
+				<div class="grid g-2" style="align-items:center">
+					<div class="reveal">
+						<span class="eyebrow">Diagnostics</span>
+						<h2>Find out on the bench, not on the motorway</h2>
+						<p style="color:var(--muted)">
+							The Compute Module 5 has no hardware H.264 encoder, so libx264 runs on the CPU and
+							2560×720 at 30 fps is genuinely close to the limit. <code>doctor</code> opens the camera,
+							reads real frames, measures the rate the driver actually delivers, and times the encoder at
+							the resolution it will actually receive.
+						</p>
+						<ul class="checks">
+							<li><b>environment</b> — versions of everything that matters</li>
+							<li><b>ffmpeg</b> — present, or the fallback writer will be used</li>
+							<li><b>storage</b> — writable, and how much room is left</li>
+							<li><b>service</b> — fails outright if public without a token</li>
+							<li><b>devices</b> — what responded to a probe</li>
+							<li><b>camera</b> — opens, delivers frames, at the mode you asked for</li>
+							<li><b>telemetry</b> — whether there is really an IMU block in there</li>
+							<li><b>encoder</b> — measured frames per second, against what you need</li>
+						</ul>
+					</div>
+
+					<div class="reveal">
+						<div class="code">
+							<div class="code-head">
+								<span>vectra180 doctor</span>
+								<span class="grow"></span>
+								<button class="copy" type="button">copy</button>
+							</div>
+							<pre><code><span class="tok-ok">[ ok ]</span> environment: vectra180 1.0.0 on Linux aarch64
+<span class="tok-ok">[ ok ]</span> ffmpeg: /usr/bin/ffmpeg
+<span class="tok-ok">[ ok ]</span> storage: 38.4 GB free, 573 loop clip(s)
+<span class="tok-ok">[ ok ]</span> service: http://0.0.0.0:8080 (token required)
+<span class="tok-ok">[ ok ]</span> devices: /dev/video0 2560x720 @ 30fps
+<span class="tok-ok">[ ok ]</span> camera: 29.8 fps measured (30 requested)
+<span class="tok-ok">[ ok ]</span> telemetry: IMU present: 1.00 g total
+<span class="tok-warn">[warn]</span> encoder: 34.2 fps (30 needed)
+         <span class="tok-c">-&gt; little headroom; a warm cabin could
+            push it under</span>
+
+All critical checks passed with 1 warning(s).</code></pre>
+						</div>
+						<p class="panel-note">
+							Every non-<code>ok</code> line carries a remedy underneath it — the thing to actually do,
+							not a restatement of the problem.
+						</p>
+					</div>
+				</div>
+			</div>
+		</section>
+
+		<!-- ====================================================== interface -->
+		<section id="interface">
+			<div class="wrap">
+				<div class="section-head reveal">
+					<span class="eyebrow">Interface</span>
+					<h2>One page, served from the car</h2>
+					<p>
+						No framework, no bundler, no CDN — the whole UI is one HTML file the service hands out, so it
+						works on a phone parked in a field with no signal.
+					</p>
+				</div>
+
+				<div class="grid g-2" style="align-items:start">
+					<div class="reveal">
+						<div class="uimap" role="img"
+							aria-label="A map of the web interface: a live preview pane, a storage meter split between loop footage and locked events, and a clip list where locked clips are marked.">
+							<div class="uimap-bar">
+								<span class="dot" aria-hidden="true"></span>
+								<span class="uimap-url">http://vectra.local:8080/</span>
+							</div>
+							<div class="uimap-body">
+								<div class="uimap-cell">
+									<div class="uimap-label">Live preview</div>
+									<div class="uimap-view"><span>/stream.mjpg</span></div>
+									<div class="uimap-label" style="margin-top:.8rem">Clips</div>
+									<ul class="cliplist">
+										<li>VEC_20260809_142211.mp4<span class="tag">60.0 s</span></li>
+										<li>VEC_20260809_142111.mp4<span class="tag lock">locked</span></li>
+										<li>VEC_20260809_142011.mp4<span class="tag">60.0 s</span></li>
+									</ul>
+								</div>
+								<div class="uimap-cell">
+									<div class="uimap-label">Storage</div>
+									<p style="font-size:.8rem;margin:0 0 .2rem;color:var(--muted)">Loop footage</p>
+									<div class="meter" style="--w:72%"><i></i></div>
+									<p style="font-size:.8rem;margin:.7rem 0 .2rem;color:var(--muted)">Locked events
+									</p>
+									<div class="meter ev" style="--w:34%"><i></i></div>
+									<div class="uimap-label" style="margin-top:1.1rem">Controls</div>
+									<div style="display:grid;gap:.4rem">
+										<span class="btn" style="font-size:.8rem;padding:.4rem .7rem">Lock this
+											clip</span>
+										<span class="btn" style="font-size:.8rem;padding:.4rem .7rem">Stop
+											recording</span>
+									</div>
+								</div>
+							</div>
+						</div>
+						<p class="demo-note" style="text-align:left">
+							An interface map, not a screenshot — it names the real routes and the real controls.
+						</p>
+					</div>
+
+					<div class="reveal">
+						<div class="table-scroll">
+							<table>
+								<caption class="sr-only">Selected HTTP routes</caption>
+								<thead>
+									<tr>
+										<th scope="col">Route</th>
+										<th scope="col">What it gives you</th>
+									</tr>
+								</thead>
+								<tbody>
+									<tr>
+										<td><code>/healthz</code></td>
+										<td>Liveness, without a token — for systemd and uptime checks</td>
+									</tr>
+									<tr>
+										<td><code>/snapshot.jpg</code></td>
+										<td>One frame. <code>?view=pano</code> for the panorama</td>
+									</tr>
+									<tr>
+										<td><code>/stream.mjpg</code></td>
+										<td>Live multipart MJPEG preview</td>
+									</tr>
+									<tr>
+										<td><code>/depth.jpg</code></td>
+										<td>A colourised disparity map, computed for this request</td>
+									</tr>
+									<tr>
+										<td><code>/api/status</code></td>
+										<td>Frame rate, telemetry, recorder counters, incidents, storage</td>
+									</tr>
+									<tr>
+										<td><code>/api/clips</code></td>
+										<td>Every clip with its duration, size and lock state</td>
+									</tr>
+									<tr>
+										<td><code>/api/clips/&lt;name&gt;</code></td>
+										<td>Download, with byte-range support so a phone can seek</td>
+									</tr>
+									<tr>
+										<td><code>/api/lock</code></td>
+										<td>Protect the current segment by hand</td>
+									</tr>
+								</tbody>
+							</table>
+						</div>
+						<p class="panel-note">
+							Every route and status code:
+							<a href="https://github.com/Life-Experimentalist/Vectra-180/blob/main/docs/api.md">docs/api.md</a>.
+							Writes are guarded against cross-origin requests, so a page open in the driver's browser
+							cannot stop the recording.
+						</p>
+					</div>
+				</div>
+			</div>
+		</section>
+
+		<!-- ======================================================= hardware -->
+		<section id="hardware">
+			<div class="wrap">
+				<div class="section-head reveal">
+					<span class="eyebrow">Hardware</span>
+					<h2>What it was built around</h2>
+					<p>
+						Nothing here is CM5-specific — it runs on any machine with a UVC camera. The Pi is simply
+						where it lives in a car.
+					</p>
+				</div>
+
+				<div class="grid g-2 reveal-stagger">
+					<div class="table-scroll" style="--i:0">
+						<table>
+							<caption class="sr-only">Reference build</caption>
+							<thead>
+								<tr>
+									<th scope="col">Part</th>
+									<th scope="col">What and why</th>
+								</tr>
+							</thead>
+							<tbody>
+								<tr>
+									<td><b>Compute</b></td>
+									<td>Raspberry Pi Compute Module 5 on the CM5 IO board, Raspberry Pi OS Bookworm.
+										A heatsink is not optional — a throttled CM5 drops frames it handled fine on
+										the bench.</td>
+								</tr>
+								<tr>
+									<td><b>Camera</b></td>
+									<td>A dual-fisheye USB (UVC) camera delivering both views side by side in one
+										frame. Give it a dedicated USB 3 port and a short, thick cable.</td>
+								</tr>
+								<tr>
+									<td><b>Storage</b></td>
+									<td>Footage on its own disk, not the boot card. An hour of default settings is
+										roughly 3.5&nbsp;GB.</td>
+								</tr>
+								<tr>
+									<td><b>Power</b></td>
+									<td>A supply that survives cranking, and a clean shutdown path on ignition-off so
+										the last segment is finalised rather than truncated.</td>
+								</tr>
+								<tr>
+									<td><b>Time</b></td>
+									<td>Network time, or an RTC on the IO board's battery header. Without either, the
+										first clips of a drive are named from the wrong wall time.</td>
+								</tr>
+							</tbody>
+						</table>
+					</div>
+
+					<div style="--i:1">
+						<div class="code">
+							<div class="code-head">
+								<span>/etc/vectra180/config.toml</span>
+								<span class="grow"></span>
+								<button class="copy" type="button">copy</button>
+							</div>
+							<pre><code><span class="tok-k">[camera]</span>
+device = <span class="tok-s">"/dev/video0"</span>
+width  = 2560       <span class="tok-c"># both eyes side by side</span>
+height = 720
+fps    = 30
+
+<span class="tok-k">[recording]</span>
+segment_seconds = 60
+max_bytes       = 34359738368  <span class="tok-c"># 32 GiB loop</span>
+min_free_bytes  = 2147483648   <span class="tok-c"># never fill the card</span>
+max_event_bytes = 8589934592   <span class="tok-c"># 8 GiB for locked clips</span>
+
+<span class="tok-k">[incident]</span>
+threshold_g = 0.6   <span class="tok-c"># deviation that counts as an impact</span>
+
+<span class="tok-k">[server]</span>
+host  = <span class="tok-s">"127.0.0.1"</span>  <span class="tok-c"># 0.0.0.0 reaches your phone --</span>
+token = <span class="tok-s">""</span>           <span class="tok-c"># and everyone else's</span></code></pre>
+						</div>
+						<p class="panel-note">
+							Settings resolve in four layers, each overriding the last: built-in defaults, this file,
+							<code>VECTRA_*</code> environment variables, then command-line flags.
+							<code>vectra180 config</code> prints the merged result with the token redacted.
+						</p>
+					</div>
+				</div>
+			</div>
+		</section>
+
+		<!-- =========================================================== docs -->
+		<section id="docs">
+			<div class="wrap">
+				<div class="section-head reveal">
+					<span class="eyebrow">Documentation</span>
+					<h2>Written from the source, not around it</h2>
+					<p>
+						Every constant, threshold, default, route and flag in these pages was read out of the code
+						before it was written down.
+					</p>
+				</div>
+
+				<div class="grid g-3 reveal-stagger">
+					<a class="card" style="--i:0"
+						href="https://github.com/Life-Experimentalist/Vectra-180/blob/main/docs/architecture.md">
+						<h3>Architecture →</h3>
+						<p>Threads, data flow, and why the pipeline is shaped this way.</p>
+					</a>
+					<a class="card" style="--i:1"
+						href="https://github.com/Life-Experimentalist/Vectra-180/blob/main/docs/configuration.md">
+						<h3>Configuration →</h3>
+						<p>Every setting, default, environment variable and validation rule.</p>
+					</a>
+					<a class="card" style="--i:2"
+						href="https://github.com/Life-Experimentalist/Vectra-180/blob/main/docs/recording.md">
+						<h3>Recording &amp; retention →</h3>
+						<p>Segments, sidecars, incidents, and how the two storage budgets are enforced.</p>
+					</a>
+					<a class="card" style="--i:3"
+						href="https://github.com/Life-Experimentalist/Vectra-180/blob/main/docs/telemetry.md">
+						<h3>Telemetry format →</h3>
+						<p>The wire format of the IMU block, byte by byte.</p>
+					</a>
+					<a class="card" style="--i:4"
+						href="https://github.com/Life-Experimentalist/Vectra-180/blob/main/docs/api.md">
+						<h3>HTTP API →</h3>
+						<p>Every route, parameter and response shape.</p>
+					</a>
+					<a class="card" style="--i:5"
+						href="https://github.com/Life-Experimentalist/Vectra-180/blob/main/docs/cli.md">
+						<h3>Command line →</h3>
+						<p>Every subcommand and flag, with real output.</p>
+					</a>
+					<a class="card" style="--i:6"
+						href="https://github.com/Life-Experimentalist/Vectra-180/blob/main/docs/troubleshooting.md">
+						<h3>Troubleshooting →</h3>
+						<p>Symptoms, causes, fixes — starting with what <code>doctor</code> told you.</p>
+					</a>
+					<a class="card" style="--i:7"
+						href="https://github.com/Life-Experimentalist/Vectra-180/blob/main/deploy/README.md">
+						<h3>Deployment runbook →</h3>
+						<p>Hardware, wiring, power, thermals, and reaching it from a phone.</p>
+					</a>
+					<a class="card" style="--i:8"
+						href="https://github.com/Life-Experimentalist/Vectra-180/blob/main/SECURITY.md">
+						<h3>Security posture →</h3>
+						<p>What is protected, what is not, and how to report a flaw.</p>
+					</a>
+				</div>
+			</div>
+		</section>
+
+		<!-- ============================================================ faq -->
+		<section id="faq">
+			<div class="wrap" style="max-width:52rem">
+				<div class="section-head reveal">
+					<span class="eyebrow">Questions</span>
+					<h2>Before you buy anything</h2>
+				</div>
+
+				<div class="reveal">
+					<details>
+						<summary>Do I need a Raspberry Pi Compute Module 5?</summary>
+						<p>
+							No. Nothing in Vectra-180 is CM5-specific. It runs on any Linux, macOS or Windows machine
+							with a UVC camera. The CM5 is simply the board it was built around, because it is the one
+							that fits in a car.
+						</p>
+					</details>
+					<details>
+						<summary>Which camera does it need?</summary>
+						<p>
+							A dual-fisheye USB (UVC) camera that delivers both views side by side in a single frame —
+							Vectra-180 splits that frame down the middle. A single-lens webcam records perfectly well,
+							but the panorama and the depth map both need two lenses. If your camera works, or doesn't,
+							please <a
+								href="https://github.com/Life-Experimentalist/Vectra-180/issues/new?template=hardware_report.yml">file
+								a hardware report</a> so the next person knows what to buy.
+						</p>
+					</details>
+					<details>
+						<summary>Does the depth map slow down recording?</summary>
+						<p>
+							No. Depth is computed on an HTTP handler thread, only when a request asks for one, never
+							per frame. Recording runs on its own thread behind a bounded queue. A depth request can
+							cost you a preview frame; it cannot cost you recorded footage.
+						</p>
+					</details>
+					<details>
+						<summary>What happens when the card fills up?</summary>
+						<p>
+							Loop footage is pruned oldest-first against two limits at once: a total size budget and a
+							free-space floor. Clips locked by an incident live in a separate directory with its own
+							budget that the loop pruner never touches. Only files matching Vectra-180's own naming
+							pattern are ever considered for deletion, so anything else on the same card is safe.
+						</p>
+					</details>
+					<details>
+						<summary>Does my camera actually contain an IMU?</summary>
+						<p>
+							Some dual-fisheye modules embed a 20-byte accelerometer and gyroscope block in the
+							metadata strip, and some do not. <code>vectra180 doctor</code> will tell you, and
+							<code>vectra180 decode</code> will let you inspect a captured frame byte by byte. Without
+							one you lose automatic incident detection — the manual lock button, recording, preview,
+							panorama, depth and the web interface all work exactly the same.
+						</p>
+					</details>
+					<details>
+						<summary>Is it safe to expose the web interface?</summary>
+						<p>
+							It binds to <code>127.0.0.1</code> by default. Binding to a network address requires
+							setting an auth token as well: <code>doctor</code> <em>fails</em>, rather than warns, if
+							the service is public without one — otherwise anyone on the network could download and
+							delete your footage. Treat it as a device on your own Wi-Fi, not something to put on the
+							open internet.
+						</p>
+					</details>
+					<details>
+						<summary>Is a dashcam recording legal where I live?</summary>
+						<p>
+							That depends entirely on where you are, and this project cannot answer it for you. Rules on
+							dashcams, on recording audio, and on what you may do with footage of other people vary by
+							country and sometimes by state. Check your local law before mounting anything.
+						</p>
+					</details>
+					<details>
+						<summary>How do I contribute?</summary>
+						<p>
+							Read <a
+								href="https://github.com/Life-Experimentalist/Vectra-180/blob/main/CONTRIBUTING.md">CONTRIBUTING.md</a>,
+							then run <code>make gate</code> — lint, type-check and the full suite, exactly what CI
+							runs. The tests need no camera and no display.
+						</p>
+					</details>
+				</div>
+			</div>
+		</section>
+
+		<!-- ============================================================ cta -->
+		<section id="get">
+			<div class="wrap">
+				<div class="cta reveal">
+					<h2>Put it in the car</h2>
+					<p>
+						One command to install, one to check the machine over, and then it looks after itself until you
+						want the footage.
+					</p>
+					<div class="hero-cta">
+						<a class="btn btn-primary" href="https://github.com/Life-Experimentalist/Vectra-180">
+							<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+								<path
+									d="M12 .5a12 12 0 0 0-3.8 23.4c.6.1.8-.3.8-.6v-2c-3.3.7-4-1.6-4-1.6-.6-1.4-1.4-1.8-1.4-1.8-1.1-.7.1-.7.1-.7 1.2.1 1.9 1.2 1.9 1.2 1.1 1.9 2.9 1.3 3.6 1 .1-.8.4-1.3.8-1.6-2.7-.3-5.5-1.3-5.5-5.9 0-1.3.5-2.4 1.2-3.2-.1-.3-.5-1.5.1-3.2 0 0 1-.3 3.3 1.2a11.5 11.5 0 0 1 6 0C17.7 5.1 18.7 5.4 18.7 5.4c.7 1.7.3 2.9.1 3.2.8.8 1.2 1.9 1.2 3.2 0 4.6-2.8 5.6-5.5 5.9.4.4.8 1.1.8 2.2v3.3c0 .3.2.7.8.6A12 12 0 0 0 12 .5z" />
+							</svg>
+							<span>Star it on GitHub</span>
+						</a>
+						<a class="btn"
+							href="https://github.com/Life-Experimentalist/Vectra-180/blob/main/deploy/README.md">
+							<span>Read the deployment runbook</span>
+						</a>
+					</div>
+				</div>
+			</div>
+		</section>
+	</main>
+
+	<footer>
+		<div class="wrap">
+			<div class="foot-grid">
+				<div>
+					<a class="brand" href="#top" style="margin-bottom:.8rem">
+						<img src="icon.svg" alt="" width="30" height="30" />
+						<span>Vectra<b>180</b></span>
+					</a>
+					<p style="max-width:34ch;margin:0">
+						A dual-fisheye dashcam for the Raspberry Pi Compute Module 5, with stereoscopic depth on the
+						side.
+					</p>
+				</div>
+				<div>
+					<h4>Project</h4>
+					<ul>
+						<li><a href="https://github.com/Life-Experimentalist/Vectra-180">Source</a></li>
+						<li><a href="https://github.com/Life-Experimentalist/Vectra-180/releases">Releases</a></li>
+						<li><a
+								href="https://github.com/Life-Experimentalist/Vectra-180/blob/main/CHANGELOG.md">Changelog</a>
+						</li>
+						<li><a href="https://pypi.org/project/vectra-180/">PyPI</a></li>
+					</ul>
+				</div>
+				<div>
+					<h4>Docs</h4>
+					<ul>
+						<li><a
+								href="https://github.com/Life-Experimentalist/Vectra-180/blob/main/docs/architecture.md">Architecture</a>
+						</li>
+						<li><a
+								href="https://github.com/Life-Experimentalist/Vectra-180/blob/main/docs/configuration.md">Configuration</a>
+						</li>
+						<li><a
+								href="https://github.com/Life-Experimentalist/Vectra-180/blob/main/docs/api.md">HTTP API</a>
+						</li>
+						<li><a
+								href="https://github.com/Life-Experimentalist/Vectra-180/blob/main/docs/troubleshooting.md">Troubleshooting</a>
+						</li>
+					</ul>
+				</div>
+				<div>
+					<h4>Community</h4>
+					<ul>
+						<li><a href="https://github.com/Life-Experimentalist/Vectra-180/issues">Issues</a></li>
+						<li><a
+								href="https://github.com/Life-Experimentalist/Vectra-180/issues/new?template=hardware_report.yml">Hardware
+								reports</a></li>
+						<li><a
+								href="https://github.com/Life-Experimentalist/Vectra-180/blob/main/CONTRIBUTING.md">Contributing</a>
+						</li>
+						<li><a
+								href="https://github.com/Life-Experimentalist/Vectra-180/blob/main/SECURITY.md">Security</a>
+						</li>
+					</ul>
+				</div>
+			</div>
+			<div class="foot-bottom">
+				<span>© 2026 Life Experimentalist · Apache License 2.0</span>
+				<span>Built for a Compute Module 5 that lives behind a windscreen.</span>
+			</div>
+		</div>
+	</footer>
+
+	<script src="fisheye.js" defer></script>
+	<script src="main.js" defer></script>
+</body>
+
+</html>

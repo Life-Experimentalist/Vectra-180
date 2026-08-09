@@ -1,0 +1,53 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+*.egg-info/
+*.egg
+
+# Environments
+.venv/
+venv/
+env/
+.env
+.env.*
+
+# Build output
+dist/
+build/
+
+# Tool caches
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+
+# Coverage
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+
+# Editors
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Recorded footage. This is the one thing in the project that is genuinely
+# private, and it is easy to leave a test recording in the working tree.
+recordings/
+*.mp4
+*.mkv
+
+# Local runtime configuration, which may carry a server token
+vectra.toml
+config.local.toml
+
+# Local assistant scratch space -- session notes, not project content
+.remember/

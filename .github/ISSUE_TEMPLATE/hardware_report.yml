@@ -1,0 +1,77 @@
+name: Hardware report
+description: Tell us about a camera or a board, whether it worked or not.
+title: "Hardware: "
+labels: ["hardware"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Dual-fisheye USB cameras vary wildly — in the formats they advertise,
+        in whether they embed an IMU block, and in how they behave when a car's
+        electrics brown out. A report that something *works* is as useful as a
+        report that it does not, because it is the only way anyone else can buy
+        with confidence.
+
+  - type: input
+    id: camera
+    attributes:
+      label: Camera
+      description: Model, vendor and the `lsusb` ID.
+      placeholder: "ELP-USB960P2CAM-V90, 32e4:9422"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: worked
+    attributes:
+      label: Did it work
+      options:
+        - Yes, recording and telemetry both
+        - Yes for recording, no telemetry
+        - Partly — see below
+        - "No"
+    validations:
+      required: true
+
+  - type: input
+    id: board
+    attributes:
+      label: Board
+      placeholder: "CM5 8GB / 32GB eMMC on the CM5 IO board"
+    validations:
+      required: true
+
+  - type: textarea
+    id: formats
+    attributes:
+      label: Advertised formats
+      description: "`v4l2-ctl -d /dev/video0 --list-formats-ext`"
+      render: text
+    validations:
+      required: true
+
+  - type: textarea
+    id: doctor
+    attributes:
+      label: Output of `vectra180 doctor`
+      render: text
+    validations:
+      required: true
+
+  - type: textarea
+    id: telemetry
+    attributes:
+      label: Output of `vectra180 decode`
+      description: >
+        This reads one frame and prints the IMU block it found in the leftmost
+        columns. If the camera embeds no telemetry, say so — that is a valid
+        and useful answer.
+      render: text
+
+  - type: textarea
+    id: notes
+    attributes:
+      label: Anything else
+      description: >
+        Sustained frame rate, CPU load, whether it survived engine cranking,
+        how hot it ran, mounting notes.

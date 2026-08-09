@@ -1,0 +1,9 @@
+blank_issues_enabled: false
+
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/Life-Experimentalist/Vectra-180/security/advisories/new
+    about: Report privately. Do not open a public issue for a security problem.
+  - name: Question or idea
+    url: https://github.com/Life-Experimentalist/Vectra-180/discussions
+    about: Ask how something works, or float an idea before it becomes a request.

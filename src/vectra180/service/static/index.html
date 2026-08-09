@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="color-scheme" content="dark" />
+    <meta name="robots" content="noindex, nofollow" />
+    <title>Vectra-180 Dashcam</title>
+    <link rel="stylesheet" href="/static/app.css" />
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230B0F19'/%3E%3Ccircle cx='16' cy='16' r='8' fill='none' stroke='%2300F2FE' stroke-width='2.5'/%3E%3Ccircle cx='16' cy='16' r='2.5' fill='%2300F2FE'/%3E%3C/svg%3E"
+    />
+  </head>
+  <body>
+    <header class="bar">
+      <div class="brand">
+        <span class="mark" aria-hidden="true"></span>
+        <span>VECTRA<b>-180</b></span>
+      </div>
+      <div class="bar-status">
+        <span id="rec-pill" class="pill pill-idle">CONNECTING</span>
+        <span id="fps" class="mono">-- fps</span>
+      </div>
+    </header>
+
+    <nav class="tabs" role="tablist">
+      <button class="tab is-active" role="tab" aria-selected="true" aria-controls="panel-live" id="tab-live">
+        Live
+      </button>
+      <button class="tab" role="tab" aria-selected="false" aria-controls="panel-clips" id="tab-clips">Clips</button>
+      <button class="tab" role="tab" aria-selected="false" aria-controls="panel-system" id="tab-system">System</button>
+    </nav>
+
+    <main>
+      <section id="panel-live" class="panel is-active" role="tabpanel" aria-labelledby="tab-live">
+        <div class="viewport">
+          <img id="preview" alt="Live camera preview" />
+          <p id="preview-error" class="empty" hidden>No frames yet. Check the camera connection.</p>
+        </div>
+
+        <div class="actions">
+          <button id="btn-lock" class="btn btn-primary">Lock clip</button>
+          <button id="btn-pano" class="btn" aria-pressed="false">Panorama</button>
+          <button id="btn-depth" class="btn">Depth map</button>
+          <button id="btn-snapshot" class="btn">Snapshot</button>
+          <button id="btn-pause" class="btn" aria-pressed="false">Pause preview</button>
+        </div>
+
+        <div class="grid" id="telemetry-grid">
+          <div class="cell"><span class="label">Roll</span><span class="value mono" id="t-roll">--</span></div>
+          <div class="cell"><span class="label">Pitch</span><span class="value mono" id="t-pitch">--</span></div>
+          <div class="cell"><span class="label">Yaw</span><span class="value mono" id="t-yaw">--</span></div>
+          <div class="cell"><span class="label">Peak G</span><span class="value mono" id="t-peak">--</span></div>
+        </div>
+      </section>
+
+      <section id="panel-clips" class="panel" role="tabpanel" aria-labelledby="tab-clips" hidden>
+        <div class="filters">
+          <button class="chip is-active" data-filter="all">All</button>
+          <button class="chip" data-filter="events">Locked</button>
+          <button class="chip" data-filter="normal">Loop</button>
+        </div>
+        <ul id="clip-list" class="clips"></ul>
+        <p id="clip-empty" class="empty" hidden>No clips recorded yet.</p>
+      </section>
+
+      <section id="panel-system" class="panel" role="tabpanel" aria-labelledby="tab-system" hidden>
+        <dl class="facts" id="facts"></dl>
+        <div class="storage">
+          <div class="storage-bar" aria-hidden="true">
+            <span id="bar-normal"></span><span id="bar-events"></span>
+          </div>
+          <p class="legend">
+            <span class="key key-normal"></span>Loop <span class="key key-events"></span>Locked
+            <span class="key key-free"></span>Free
+          </p>
+        </div>
+      </section>
+    </main>
+
+    <p id="toast" class="toast" role="status" aria-live="polite" hidden></p>
+    <script src="/static/app.js"></script>
+  </body>
+</html>
