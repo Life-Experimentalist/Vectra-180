@@ -48,6 +48,10 @@ class Device:
     fps: float = 30.0
     width: float = 2560.0
     height: float = 720.0
+    #: What ``CAP_PROP_FOURCC`` answers with. Zero is a driver that will not
+    #: say; a value that is not four printable characters is what
+    #: MediaFoundation returns, which is its own subtype number.
+    fourcc: int = 0
 
     def opens_on(self, backend: int) -> bool:
         return self.backends is None or backend in self.backends
@@ -89,6 +93,7 @@ class FakeCapture:
             cv2.CAP_PROP_FPS: self.device.fps,
             cv2.CAP_PROP_FRAME_WIDTH: self.device.width,
             cv2.CAP_PROP_FRAME_HEIGHT: self.device.height,
+            cv2.CAP_PROP_FOURCC: float(self.device.fourcc),
         }.get(prop, 0.0)
 
     def release(self) -> None:
@@ -442,6 +447,25 @@ def test_a_zero_size_leaves_the_drivers_own_mode_alone(driver: FakeDriver, camer
     source.close()
 
 
+def test_an_empty_fourcc_leaves_the_drivers_own_format_alone(driver: FakeDriver, camera: CameraConfig) -> None:
+    """The format counterpart of a zero size, and not merely "no preference".
+
+    Some modules reach their full rate only when nothing is requested: asking
+    is itself what pins them to a slower mode. There has to be a way to say so.
+    """
+    camera.fourcc = ""
+
+    source = CameraSource(camera)
+    source.open()
+
+    props = [prop for prop, _ in driver.captures[0].settings]
+    assert cv2.CAP_PROP_FOURCC not in props
+    # The size and the rate are still requested -- only the format is deferred.
+    assert cv2.CAP_PROP_FRAME_WIDTH in props
+    assert cv2.CAP_PROP_FPS in props
+    source.close()
+
+
 def test_an_explicit_device_path_wins_over_the_index(driver: FakeDriver, camera: CameraConfig) -> None:
     camera.index = 0
     camera.device = "/dev/video4"
@@ -624,6 +648,47 @@ def test_a_driver_reporting_zero_fps_falls_back(monkeypatch: pytest.MonkeyPatch,
         assert source.fps == 24.0
 
 
+def test_the_format_reported_is_the_one_the_driver_settled_on(
+    monkeypatch: pytest.MonkeyPatch, camera: CameraConfig
+) -> None:
+    """A UVC driver substitutes silently, so the request is not the answer.
+
+    Asking for MJPG and being given YUY2 is exactly how a camera ends up at a
+    fraction of its rate, and reporting the request back would hide it.
+    """
+    yuy2 = int(cv2.VideoWriter.fourcc(*"YUY2"))
+    monkeypatch.setattr(cv2, "VideoCapture", FakeDriver(devices={0: Device(fourcc=yuy2)}))
+    camera.fourcc = "MJPG"
+
+    with CameraSource(camera) as source:
+        assert source.pixel_format == "YUY2"
+        described = source.describe()
+
+    assert described["fourcc"] == "MJPG"
+    assert described["pixel_format"] == "YUY2"
+
+
+@pytest.mark.parametrize("reported", [0, 22])
+def test_a_driver_that_names_no_fourcc_reports_unknown(
+    monkeypatch: pytest.MonkeyPatch, camera: CameraConfig, reported: int
+) -> None:
+    """Not every backend answers with a FOURCC at all.
+
+    MediaFoundation returns its own subtype number, and a driver with nothing
+    to say returns zero. Neither is four printable characters, and rendering
+    them as text would put control codes in the API and on the dashboard.
+    """
+    monkeypatch.setattr(cv2, "VideoCapture", FakeDriver(devices={0: Device(fourcc=reported)}))
+
+    with CameraSource(camera) as source:
+        assert source.pixel_format == ""
+        assert source.describe()["pixel_format"] == "unknown"
+
+
+def test_the_format_of_a_closed_camera_is_not_guessed(camera: CameraConfig) -> None:
+    assert CameraSource(camera).pixel_format == ""
+
+
 def test_describe_is_json_safe(driver: FakeDriver, camera: CameraConfig) -> None:
     with CameraSource(camera) as source:
         described = source.describe()
@@ -632,6 +697,14 @@ def test_describe_is_json_safe(driver: FakeDriver, camera: CameraConfig) -> None
     assert described["backend"] == backend_name(preferred_backends()[0])
     assert described["device"] == 0
     assert described["fourcc"] == "MJPG"
+
+
+def test_an_unset_format_is_described_as_auto(driver: FakeDriver, camera: CameraConfig) -> None:
+    """An empty string in the dashboard reads as a missing value, not a choice."""
+    camera.fourcc = ""
+
+    with CameraSource(camera) as source:
+        assert source.describe()["fourcc"] == "auto"
 
 
 # -- reading -----------------------------------------------------------------

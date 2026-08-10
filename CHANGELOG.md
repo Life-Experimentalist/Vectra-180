@@ -76,9 +76,11 @@ below is the shape of that release rather than a history of how it got there.
 
 - `run`, `view`, `devices`, `doctor`, `decode` and `config`, installed as both
   `vectra180` and the shorter alias `vectra`.
-- `vectra180 doctor` runs eight checks — environment, ffmpeg, storage, service,
-  devices, camera, telemetry and encoder — against the real capture and encode
-  path, and prints a remedy under anything that is not `ok`.
+- `vectra180 doctor` runs nine checks — environment, ffmpeg, storage, service,
+  devices, camera, telemetry, encoder and pipeline — against the real capture and
+  encode path, and prints a remedy under anything that is not `ok`. The last of
+  them records for five seconds through the whole chain, because two stages that
+  are each fast enough alone do not add up to a pipeline that keeps up.
 - `vectra180 devices` probes every capture driver the platform offers and labels
   each result with the backend that saw it, because an index names different
   hardware on different drivers. A device that opens but streams nothing — what

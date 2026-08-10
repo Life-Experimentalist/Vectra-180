@@ -149,6 +149,10 @@ class FakeCameraSource:
     def backend(self) -> str:
         return "FAKE"
 
+    @property
+    def pixel_format(self) -> str:
+        return "MJPG"
+
     def describe(self) -> dict[str, object]:
         image = self._images[0]
         return {
@@ -159,6 +163,7 @@ class FakeCameraSource:
             "fps": self.fps,
             "device": "fake",
             "fourcc": "MJPG",
+            "pixel_format": self.pixel_format,
         }
 
     def read(self) -> Frame | None:

@@ -218,6 +218,125 @@ def test_a_full_queue_drops_frames_instead_of_growing(
     assert recorder.stats.dropped_frames == 20
 
 
+def test_the_prepare_callable_produces_the_pixels_that_are_written(
+    recorder: SegmentRecorder, writers: list[FakeWriter], frame: np.ndarray
+) -> None:
+    """What reaches the encoder is the prepared frame, not the submitted one."""
+    written: list[np.ndarray] = []
+    monkeypatched = np.full((8, 8, 3), 77, dtype=np.uint8)
+
+    def capture(_self: FakeWriter, image: np.ndarray) -> None:
+        written.append(image.copy())
+
+    recorder.start(SIZE, 30.0, prepare=lambda _image, _wall: monkeypatched)
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(FakeWriter, "write", capture)
+        recorder.submit(frame)
+        wait_until(lambda: len(written) == 1)
+
+    assert np.array_equal(written[0], monkeypatched)
+
+
+def test_preparing_happens_off_the_submitting_thread(
+    recorder: SegmentRecorder, writers: list[FakeWriter], frame: np.ndarray
+) -> None:
+    """The whole point of the callable: the caller must not pay for the pixels.
+
+    A UVC driver hands over the frame that is ready when asked and no other, so
+    a capture loop that stops to downscale misses the next one entirely.
+    """
+    threads: list[int] = []
+
+    def note(image: np.ndarray, _wall: float) -> np.ndarray:
+        threads.append(threading.get_ident())
+        return image
+
+    recorder.start(SIZE, 30.0, prepare=note)
+    recorder.submit(frame)
+    wait_for_frames(recorder, 1)
+
+    assert len(threads) == 1
+    assert threads[0] != threading.get_ident()
+
+
+def test_a_prepare_that_is_not_given_leaves_the_frame_alone(
+    recorder: SegmentRecorder, writers: list[FakeWriter], frame: np.ndarray
+) -> None:
+    """Callers that already hand over final pixels must not need a callable."""
+    recorder.start(SIZE, 30.0)
+    recorder.submit(frame)
+    wait_for_frames(recorder, 1)
+
+    assert writers[0].frames == 1
+
+
+def test_large_frames_are_bounded_by_bytes_not_only_by_count(
+    config: RecordingConfig, writers: list[FakeWriter], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Seconds of footage are not a fixed amount of memory.
+
+    The queue is sized in frames, which is the wrong unit when one frame is
+    14 MB: two seconds of a 4000x1200 module is most of a gigabyte, and the
+    kernel would kill a 4 GB Pi long before the encoder recovered.
+    """
+    monkeypatch.setattr(segmenter_module, "_MAX_QUEUE_BYTES", 4096)
+    stalled = threading.Event()
+    entered = threading.Event()
+
+    def stall(self: FakeWriter, _frame: np.ndarray) -> None:
+        entered.set()
+        stalled.wait(timeout=5.0)
+        self.frames += 1
+
+    monkeypatch.setattr(FakeWriter, "write", stall)
+    recorder = SegmentRecorder(config)
+    big = np.zeros((32, 32, 3), dtype=np.uint8)  # 3072 bytes
+    try:
+        recorder.start(SIZE, 30.0)
+        recorder.submit(big)
+        assert entered.wait(timeout=5.0)
+
+        # The queue has room for 60 frames; the byte budget has room for one.
+        accepted = sum(recorder.submit(big) for _ in range(5))
+        stalled.set()
+    finally:
+        recorder.stop(timeout=5.0)
+
+    assert accepted == 1
+    assert recorder.stats.dropped_frames == 4
+
+
+def test_a_frame_bigger_than_the_whole_budget_is_still_recorded(
+    config: RecordingConfig, writers: list[FakeWriter], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Refusing it would record nothing at all rather than record it slowly."""
+    monkeypatch.setattr(segmenter_module, "_MAX_QUEUE_BYTES", 16)
+    recorder = SegmentRecorder(config)
+    frame = np.zeros((32, 32, 3), dtype=np.uint8)
+    try:
+        recorder.start(SIZE, 30.0)
+        assert recorder.submit(frame) is True
+        wait_for_frames(recorder, 1)
+    finally:
+        recorder.stop(timeout=5.0)
+
+    assert recorder.stats.dropped_frames == 0
+
+
+def test_the_byte_budget_is_released_as_frames_are_encoded(
+    recorder: SegmentRecorder, writers: list[FakeWriter], frame: np.ndarray, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Otherwise the budget is a one-shot allowance and recording stops."""
+    monkeypatch.setattr(segmenter_module, "_MAX_QUEUE_BYTES", frame.nbytes * 2)
+    recorder.start(SIZE, 30.0)
+
+    for index in range(10):
+        assert recorder.submit(frame) is True
+        wait_for_frames(recorder, index + 1)
+
+    assert recorder.stats.dropped_frames == 0
+
+
 def test_the_queue_depth_follows_the_frame_rate(config: RecordingConfig) -> None:
     """Two seconds of footage may sit unencoded, whatever the camera runs at."""
     recorder = SegmentRecorder(config, queue_seconds=2.0)

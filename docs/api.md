@@ -197,7 +197,8 @@ frame.
     "height": 720,
     "fps": 30.0,
     "device": "/dev/video0",
-    "fourcc": "MJPG"
+    "fourcc": "MJPG",
+    "pixel_format": "MJPG"
   },
   "fps": 29.94,
   "frames": 108214,

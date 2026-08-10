@@ -106,7 +106,8 @@ permanent; `--token` is for a one-off.
 
 The command to run before trusting an install. Every check exercises the **real**
 path — the camera is opened, frames are read, the encoder is timed at the
-resolution the camera actually produced, and the recording volume is written to.
+resolution the camera actually produced, the recording volume is written to, and
+the whole chain is then run together for five seconds to see what it sustains.
 
 ```bash
 vectra180 doctor
@@ -117,7 +118,7 @@ vectra180 doctor
 | `--no-camera` | Skip the checks that need hardware |
 | `--json` | Machine-readable output |
 
-Eight checks, in this order:
+Nine checks, in this order:
 
 ```mermaid
 flowchart TB
@@ -130,7 +131,8 @@ flowchart TB
     DEV --> CAM["camera<br/><i>open, read 30 frames, measure fps</i>"]
     CAM --> TEL["telemetry<br/><i>decode the IMU block</i>"]
     TEL --> ENC["encoder<br/><i>time 30 frames at real size</i>"]
-    ENC --> END
+    ENC --> PIPE["pipeline<br/><i>record for 5 s, all stages at once</i>"]
+    PIPE --> END
 ```
 
 Sample output:
@@ -145,6 +147,7 @@ Sample output:
 [ ok ] telemetry: IMU present: 1.00 g total, gyro +0.00/-0.00/+0.01 rad/s
 [warn] encoder: FFmpegWriter at 2530x720 preset 'ultrafast': 34.2 fps (30 needed)
          -> there is little headroom; a warm cabin or a background task could push it under
+[ ok ] pipeline: 29.4 fps captured, prepared and encoded together (30 requested)
 
 All critical checks passed with 1 warning(s).
 ```
@@ -167,11 +170,29 @@ makes it usable in a provisioning script.
 | `camera` | it will not open, or opens and returns nothing | the driver gave a different mode than requested, or measured fps is under 80 % of requested |
 | `telemetry` | never | `metadata_width` is at least as wide as the frame, or no IMU block decoded |
 | `encoder` | it will not start, or it is slower than `camera.fps` | it is under 125 % of `camera.fps` — little headroom |
+| `pipeline` | end-to-end recording fails, or lands under half of `camera.fps` | it lands under 80 % of `camera.fps` |
 
-**The encoder check is the important one on a CM5.** There is no hardware H.264
-block, so libx264 runs on the Cortex-A76 cores and 2560×720 at 30 fps is
-genuinely close to the limit. Finding that out here beats finding it out from a
-clip with two thirds of its frames missing.
+**The pipeline check is the one that answers the question you asked.** The camera
+and encoder checks each time their own stage with nothing else running, and two
+comfortable numbers do not add up to a comfortable pipeline — the stages share
+cores, memory bandwidth and one interpreter lock. So this check records for five
+seconds through the real engine and counts what reached the file.
+
+It is skipped, and reported as such, when `recording.enabled` is `false`. The
+clips it writes go to a temporary directory that is deleted afterwards, and the
+web service is held down for the duration so a viewer is not measured as part of
+the pipeline.
+
+**A shortfall here is not only lost detail.** The clip declares `camera.fps` in
+its header, so footage arriving slower than that plays back faster than the road
+went by — which is why the sidecar marks such clips discontinuous. Lowering
+`recording.scale` buys the rate back; setting `camera.fps` to what the machine
+actually sustains fixes the playback speed.
+
+**The encoder check still matters on a CM5.** There is no hardware H.264 block,
+so libx264 runs on the Cortex-A76 cores and 2560×720 at 30 fps is genuinely close
+to the limit. Where `pipeline` says *whether* the machine keeps up, `encoder`
+says whether the encoder is the reason.
 
 **A telemetry warning is not a fault.** Not every dual-fisheye module embeds an
 IMU block. Recording, preview, the panorama and the web UI all work without it;

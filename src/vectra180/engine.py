@@ -174,8 +174,12 @@ class Engine:
             self.recorder.lock_current(incident.source)
 
         if self.recorder.running:
+            # Submitted as captured. The downscale and the burned clock happen
+            # on the recorder thread, because this loop has to be back at the
+            # camera before the next frame is ready or it waits a whole extra
+            # interval for the one after it.
             self.recorder.submit(
-                self._prepare_for_recording(image, frame.wall_time),
+                image,
                 monotonic=frame.monotonic,
                 wall_time=frame.wall_time,
                 sample=sample,
@@ -194,9 +198,10 @@ class Engine:
     def _prepare_for_recording(self, image: np.ndarray, wall_time: float) -> np.ndarray:
         """Produce the exact pixels that go into the file.
 
-        The timestamp is drawn on a copy: the snapshot published for preview
-        and depth must stay clean, or the burned text would end up inside a
-        disparity computation.
+        Called on the recorder thread, and it must leave ``image`` untouched:
+        the same array is published as the live snapshot, so drawing into it
+        would burn the clock into the preview and into the disparity map. The
+        timestamp therefore goes onto a copy.
 
         Any downscale happens first, so the burned clock is drawn at the size
         it will be read at rather than shrunk with everything else.
@@ -222,7 +227,7 @@ class Engine:
             raise CaptureError("no frames arrived within 10s; cannot start recording")
         prepared = self._prepare_for_recording(snapshot.image, snapshot.wall_time)
         height, width = prepared.shape[:2]
-        self.recorder.start((width, height), self.source.fps)
+        self.recorder.start((width, height), self.source.fps, prepare=self._prepare_for_recording)
 
     # -- consumers ---------------------------------------------------------
 

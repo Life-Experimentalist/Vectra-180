@@ -184,6 +184,27 @@ def test_a_non_contiguous_frame_is_still_written(spawned: list[FakeProcess], tmp
     assert len(spawned[0].stdin.getvalue()) == SIZE[0] * SIZE[1] * 3
 
 
+def test_a_contiguous_frame_is_not_copied(
+    spawned: list[FakeProcess], tmp_path: Path, frame: np.ndarray, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The common case must reach the pipe as a view, not as two copies.
+
+    Every frame the recorder writes is already contiguous, so a copy here is
+    paid on every frame of every clip -- and paid while holding the interpreter
+    lock, which is time the capture thread does not get.
+    """
+
+    def refuse(_array: np.ndarray) -> np.ndarray:
+        raise AssertionError("a contiguous frame was copied on its way to the pipe")
+
+    monkeypatch.setattr(writer_module.np, "ascontiguousarray", refuse)
+    encoder = FFmpegWriter(tmp_path / "clip.mp4", SIZE, 30.0, binary="ffmpeg")
+
+    encoder.write(frame)
+
+    assert spawned[0].stdin.getvalue() == frame.tobytes()
+
+
 def test_a_wrongly_sized_frame_is_refused(spawned: list[FakeProcess], tmp_path: Path) -> None:
     """ffmpeg would silently reinterpret it, shearing every frame after."""
     encoder = FFmpegWriter(tmp_path / "clip.mp4", SIZE, 30.0, binary="ffmpeg")

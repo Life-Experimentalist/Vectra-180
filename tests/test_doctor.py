@@ -8,17 +8,18 @@ working hardware would never see.
 
 Two things are substituted throughout. The hardware seams
 (``enumerate_devices``, ``CameraSource``, ``ffmpeg_path``, ``create_writer``,
-``storage_stats``) are patched in the :mod:`vectra180.doctor` namespace, and
-:mod:`time` is replaced with :class:`Clock`, whose readings advance by a fixed
-step. Both rate measurements in doctor take exactly two readings, so the
-measured capture and encode rates come out exact instead of depending on how
-busy the machine running the suite happens to be.
+``storage_stats``, ``Engine``) are patched in the :mod:`vectra180.doctor`
+namespace, and :mod:`time` is replaced with :class:`Clock`, whose readings
+advance by a fixed step. Every rate measurement in doctor takes exactly two
+readings, so the measured rates come out exact instead of depending on how busy
+the machine running the suite happens to be.
 """
 
 from __future__ import annotations
 
 import itertools
 import json
+import threading
 from dataclasses import replace
 from pathlib import Path
 from typing import Any, NoReturn
@@ -35,6 +36,7 @@ from tests.conftest import (
     make_frame,
 )
 from vectra180 import doctor as doctor_module
+from vectra180 import engine as engine_module
 from vectra180.capture import DeviceInfo
 from vectra180.config import EngineConfig
 from vectra180.doctor import (
@@ -48,12 +50,14 @@ from vectra180.doctor import (
     _check_encoder,
     _check_environment,
     _check_ffmpeg,
+    _check_pipeline,
     _check_server,
     _check_storage,
     _check_telemetry,
     run_diagnostics,
 )
 from vectra180.errors import CaptureError, RecorderError
+from vectra180.recorder import segmenter as segmenter_module
 from vectra180.recorder.storage import StorageStats
 
 #: Frames the capture probe reads. Mirrors ``doctor._CAPTURE_SAMPLES``; the rate
@@ -77,6 +81,15 @@ class Clock:
         now = self._now
         self._now += self._step
         return now
+
+    def sleep(self, seconds: float) -> None:
+        """Pass the benchmark window without spending it.
+
+        ``_check_pipeline`` records for five real seconds. A suite cannot afford
+        that per test, so the wait is skipped and only the clock moves -- which
+        makes the window it measures exactly ``seconds`` when ``step`` is zero.
+        """
+        self._now += seconds
 
 
 class BlindSource(FakeCameraSource):
@@ -112,6 +125,57 @@ class BenchWriter:
 
     def close(self) -> None:
         self.closed += 1
+
+
+class PipelineStats:
+    """The recorder counters the end-to-end benchmark samples.
+
+    ``written_frames`` is read once before the window opens and once after it
+    closes, so the first reading is the starting count and every later one is
+    the finishing count.
+    """
+
+    def __init__(self, written: int, dropped: int) -> None:
+        self._written = written
+        self._sampled = False
+        self.dropped_frames = dropped
+
+    @property
+    def written_frames(self) -> int:
+        if not self._sampled:
+            self._sampled = True
+            return 0
+        return self._written
+
+
+class PipelineRecorder:
+    def __init__(self, stats: PipelineStats) -> None:
+        self.stats = stats
+
+
+class PipelineEngine:
+    """Stands in for the engine the end-to-end benchmark builds for itself.
+
+    Only the four calls the check makes are implemented, plus the record of
+    which config it was handed -- the check is supposed to redirect the clips
+    somewhere disposable rather than into the user's own recordings.
+    """
+
+    def __init__(self, config: EngineConfig, *, written: int, dropped: int, error: Exception | None) -> None:
+        self.config = config
+        self.recorder = PipelineRecorder(PipelineStats(written, dropped))
+        self.stopped = 0
+        self._error = error
+
+    def start(self) -> None:
+        if self._error is not None:
+            raise self._error
+
+    def begin_recording(self) -> None:
+        return None
+
+    def stop(self) -> None:
+        self.stopped += 1
 
 
 def device(index: int = 0, name: str = "USB 3.0 Camera") -> DeviceInfo:
@@ -173,6 +237,28 @@ def writers(monkeypatch: pytest.MonkeyPatch) -> list[BenchWriter]:
 
     monkeypatch.setattr(doctor_module, "create_writer", factory)
     return created
+
+
+@pytest.fixture
+def engines(monkeypatch: pytest.MonkeyPatch) -> Any:
+    """Replace the engine the pipeline benchmark builds; collect every one.
+
+    The check drives a whole engine rather than a stage, so the substitution is
+    at the ``Engine`` name doctor imported. Frame counts are handed back rather
+    than produced, which is what makes the measured rate exact.
+    """
+    created: list[PipelineEngine] = []
+
+    def install(*, written: int = 1000, dropped: int = 0, error: Exception | None = None) -> list[PipelineEngine]:
+        def factory(config: EngineConfig) -> PipelineEngine:
+            engine = PipelineEngine(config, written=written, dropped=dropped, error=error)
+            created.append(engine)
+            return engine
+
+        monkeypatch.setattr(doctor_module, "Engine", factory)
+        return created
+
+    return install
 
 
 @pytest.fixture
@@ -420,6 +506,38 @@ def test_a_camera_below_the_configured_rate_warns(
     assert "MJPG" in check.remedy
 
 
+@pytest.mark.parametrize(
+    ("settled", "expected"),
+    [("YUY2", "settled on YUY2"), ("", "will not say which format")],
+)
+def test_the_rate_warning_names_the_format_the_driver_settled_on(
+    report: Report,
+    config: EngineConfig,
+    monkeypatch: pytest.MonkeyPatch,
+    clock: Any,
+    settled: str,
+    expected: str,
+) -> None:
+    """Asking for MJPG and being handed YUY2 is why the rate is low.
+
+    The gap between request and answer is the whole diagnosis, so the remedy
+    quotes the driver rather than repeating the request back -- and says so
+    plainly when the backend will not name a format at all.
+    """
+    clock(3.0)
+
+    class Substituting(FakeCameraSource):
+        pixel_format = settled
+
+    monkeypatch.setattr(doctor_module, "CameraSource", lambda _config: Substituting())
+
+    _check_camera(report, config)
+
+    remedy = named(report, "camera").remedy
+    assert "asked for MJPG" in remedy
+    assert expected in remedy
+
+
 def test_a_probe_that_takes_no_time_does_not_divide_by_zero(
     report: Report, config: EngineConfig, monkeypatch: pytest.MonkeyPatch, clock: Any
 ) -> None:
@@ -544,6 +662,20 @@ def test_a_module_without_an_imu_warns(report: Report, config: EngineConfig) -> 
     check = named(report, "telemetry")
     assert check.status == WARN
     assert "telemetry.enabled = false" in check.remedy
+
+
+def test_the_imu_remedy_says_that_switching_off_also_stops_the_cropping(report: Report, config: EngineConfig) -> None:
+    """Some modules write a block this decoder cannot read.
+
+    Switching telemetry off is the obvious response and the wrong one there:
+    cropping is gated on the same switch, so it would leave the block burned
+    into every recorded frame. The remedy has to say so.
+    """
+    _check_telemetry(report, config, [make_frame(), make_frame()])
+
+    remedy = named(report, "telemetry").remedy
+    assert "telemetry.metadata_width" in remedy
+    assert "stops the cropping" in remedy
 
 
 def test_one_frame_alone_cannot_confirm_telemetry(report: Report, config: EngineConfig) -> None:
@@ -768,6 +900,54 @@ def test_an_encoder_that_cannot_keep_up_fails(
     assert "Install ffmpeg" not in check.remedy
 
 
+def test_a_slow_encoder_is_given_a_scale_to_try(
+    report: Report, config: EngineConfig, writers: list[BenchWriter], clock: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ "Lower something" is not advice anyone can act on.
+
+    Encoder cost tracks pixel count, so the measured rate says how far the
+    scale has to come down: half the rate means half the pixels, which is
+    about 0.71 of the scale, less a tenth for headroom.
+    """
+    clock(2.0)
+    del writers
+    monkeypatch.setattr(doctor_module, "ffmpeg_path", lambda: "/usr/bin/ffmpeg")
+
+    _check_encoder(report, config, [make_frame()])
+
+    remedy = named(report, "encoder").remedy
+    assert "recording.scale to about 0.64" in remedy
+    # Already at the fastest preset, so suggesting it would be noise.
+    assert "recording.preset" not in remedy
+
+
+def test_the_suggested_scale_builds_on_the_one_already_set(
+    report: Report, config: EngineConfig, writers: list[BenchWriter], clock: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The benchmark ran at the configured scale, so the factor multiplies it."""
+    clock(2.0)
+    del writers
+    config.recording.scale = 0.5
+    monkeypatch.setattr(doctor_module, "ffmpeg_path", lambda: "/usr/bin/ffmpeg")
+
+    _check_encoder(report, config, [make_frame()])
+
+    assert "recording.scale to about 0.32" in named(report, "encoder").remedy
+
+
+def test_a_slow_encoder_on_a_slow_preset_is_told_to_change_it(
+    report: Report, config: EngineConfig, writers: list[BenchWriter], clock: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    clock(2.0)
+    del writers
+    config.recording.preset = "medium"
+    monkeypatch.setattr(doctor_module, "ffmpeg_path", lambda: "/usr/bin/ffmpeg")
+
+    _check_encoder(report, config, [make_frame()])
+
+    assert "recording.preset to 'ultrafast'" in named(report, "encoder").remedy
+
+
 def test_a_slow_encoder_without_ffmpeg_is_told_to_install_it(
     report: Report, config: EngineConfig, writers: list[BenchWriter], clock: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -838,6 +1018,190 @@ def test_the_benchmark_cycles_distinct_frames(
 
 
 # --------------------------------------------------------------------------
+# pipeline
+# --------------------------------------------------------------------------
+#
+# The window is five seconds of ``Clock.sleep``; a zero step means nothing else
+# moves the clock, so the frame count a test hands back divides by exactly five.
+
+
+def test_the_pipeline_check_measures_capture_and_encode_together(
+    report: Report, config: EngineConfig, engines: Any, clock: Any
+) -> None:
+    """Two fast stages can still add up to a slow recorder; this is the total."""
+    clock(0.0)
+    engines(written=150)
+
+    _check_pipeline(report, config)
+
+    check = named(report, "pipeline")
+    assert check.status == OK
+    assert check.detail == "30.0 fps captured, prepared and encoded together (30 requested)"
+
+
+def test_a_pipeline_slower_than_the_camera_warns(
+    report: Report, config: EngineConfig, engines: Any, clock: Any
+) -> None:
+    """Twenty of the thirty frames a second: recording, but not at the rate asked."""
+    clock(0.0)
+    engines(written=100)
+
+    _check_pipeline(report, config)
+
+    check = named(report, "pipeline")
+    assert check.status == WARN
+    assert "20.0 fps" in check.detail
+    assert "clips play faster than real time" in check.remedy
+    assert "camera.fps to about 20" in check.remedy
+
+
+def test_a_pipeline_at_half_the_rate_fails(report: Report, config: EngineConfig, engines: Any, clock: Any) -> None:
+    clock(0.0)
+    engines(written=45)
+
+    _check_pipeline(report, config)
+
+    assert named(report, "pipeline").status == FAIL
+
+
+def test_dropped_frames_are_named_in_the_pipeline_result(
+    report: Report, config: EngineConfig, engines: Any, clock: Any
+) -> None:
+    """A recorder shedding frames under load is the number that explains the rate."""
+    clock(0.0)
+    engines(written=150, dropped=7)
+
+    _check_pipeline(report, config)
+
+    assert "7 frame(s) dropped" in named(report, "pipeline").detail
+
+
+def test_the_pipeline_check_is_skipped_when_recording_is_off(
+    report: Report, config: EngineConfig, engines: Any, clock: Any
+) -> None:
+    clock(0.0)
+    built = engines()
+    config.recording.enabled = False
+
+    _check_pipeline(report, config)
+
+    check = named(report, "pipeline")
+    assert check.status == OK
+    assert "skipped" in check.detail
+    assert built == []
+
+
+def test_a_pipeline_that_cannot_open_the_camera_fails(
+    report: Report, config: EngineConfig, engines: Any, clock: Any
+) -> None:
+    clock(0.0)
+    built = engines(error=CaptureError("could not open camera 0"))
+
+    _check_pipeline(report, config)
+
+    check = named(report, "pipeline")
+    assert check.status == FAIL
+    assert "could not open camera 0" in check.detail
+    # Still shut down: a half-started engine holds the camera open otherwise,
+    # and every check after this one would then find the device busy.
+    assert built[0].stopped == 1
+
+
+def test_the_pipeline_benchmark_writes_nowhere_near_the_real_clips(
+    report: Report, config: EngineConfig, engines: Any, clock: Any
+) -> None:
+    """Five seconds of footage is not something to leave in someone's recordings."""
+    clock(0.0)
+    built = engines(written=150)
+    real_clips = config.recording.directory
+
+    _check_pipeline(report, config)
+
+    probe = built[0].config
+    assert probe.recording.directory != real_clips
+    # Torn down afterwards, so a benchmark run leaves no footage anywhere.
+    assert not probe.recording.directory.exists()
+    # And the preview server stays down, or a viewer would be measured as part
+    # of the pipeline and make the machine look slower than it is.
+    assert not probe.server.enabled
+    # The redirection happened on a copy: the caller's config is unchanged.
+    assert config.recording.directory == real_clips
+    assert built[0].stopped == 1
+
+
+def test_the_pipeline_benchmark_measures_a_real_engine(
+    report: Report, config: EngineConfig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The other pipeline tests substitute the engine; this one drives it.
+
+    Nothing here is timed to a threshold -- a suite running on a loaded CI box
+    would fail that at random. What it proves is that the check can start the
+    real capture-prepare-encode chain, get frames through it, and stop cleanly.
+    """
+    opened: list[BenchWriter] = []
+
+    def factory(path: Path, size: tuple[int, int], _fps: float, _config: Any) -> BenchWriter:
+        writer = BenchWriter(path, size)
+        opened.append(writer)
+        return writer
+
+    monkeypatch.setattr(engine_module, "CameraSource", lambda _config: FakeCameraSource())
+    monkeypatch.setattr(segmenter_module, "create_writer", factory)
+    monkeypatch.setattr(doctor_module, "_PIPELINE_SECONDS", 0.5)
+
+    _check_pipeline(report, config)
+
+    check = named(report, "pipeline")
+    assert check.status in {OK, WARN, FAIL}
+    assert "captured, prepared and encoded together" in check.detail
+    assert opened and opened[0].written > 0
+
+
+def test_the_pipeline_count_waits_for_the_queue_to_drain(
+    report: Report, config: EngineConfig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Frames still queued when the window closes are neither written nor dropped.
+
+    Counting them mid-flight would understate the rate by up to the depth of the
+    queue -- two seconds of it -- which on a five-second benchmark is a third of
+    the answer. Reported as a warning, that is doctor telling someone to lower
+    their scale over frames that were about to be encoded anyway.
+
+    Here the encoder is held back until the engine is stopped, so every frame it
+    writes is one that only the drain produced. If the count were taken before
+    the shutdown, the measured rate would be zero.
+    """
+    released = threading.Event()
+
+    class SlowWriter(BenchWriter):
+        def write(self, frame: np.ndarray) -> None:
+            released.wait(timeout=5.0)
+            super().write(frame)
+
+    opened: list[SlowWriter] = []
+
+    def factory(path: Path, size: tuple[int, int], _fps: float, _config: Any) -> SlowWriter:
+        writer = SlowWriter(path, size)
+        opened.append(writer)
+        return writer
+
+    def stop_then_release(self: Any, *args: Any, **kwargs: Any) -> None:
+        released.set()
+        real_stop(self, *args, **kwargs)
+
+    real_stop = engine_module.Engine.stop
+    monkeypatch.setattr(engine_module, "CameraSource", lambda _config: FakeCameraSource())
+    monkeypatch.setattr(segmenter_module, "create_writer", factory)
+    monkeypatch.setattr(engine_module.Engine, "stop", stop_then_release)
+    monkeypatch.setattr(doctor_module, "_PIPELINE_SECONDS", 0.3)
+
+    _check_pipeline(report, config)
+
+    assert opened[0].written > 0
+    assert not named(report, "pipeline").detail.startswith("0.0 fps")
+
+
+# --------------------------------------------------------------------------
 # service
 # --------------------------------------------------------------------------
 
@@ -895,11 +1259,12 @@ def test_a_public_service_with_a_token_passes(report: Report, config: EngineConf
 
 @pytest.fixture
 def working_hardware(
-    monkeypatch: pytest.MonkeyPatch, storage: Any, writers: list[BenchWriter], clock: Any
+    monkeypatch: pytest.MonkeyPatch, storage: Any, writers: list[BenchWriter], clock: Any, engines: Any
 ) -> list[BenchWriter]:
     """Everything attached and fast enough."""
     storage()
     clock(0.5)
+    engines(written=1000)
     monkeypatch.setattr(doctor_module, "enumerate_devices", lambda: [device()])
     monkeypatch.setattr(doctor_module, "ffmpeg_path", lambda: "/usr/bin/ffmpeg")
     monkeypatch.setattr(doctor_module, "CameraSource", lambda _config: FakeCameraSource())
@@ -920,6 +1285,7 @@ def test_diagnostics_run_every_check(config: EngineConfig, working_hardware: lis
         "camera",
         "telemetry",
         "encoder",
+        "pipeline",
     ]
     assert result.ok
 
@@ -956,10 +1322,11 @@ def test_a_misconfigured_strip_width_does_not_cancel_the_report(
 
 
 def test_a_report_from_a_bare_machine_fails_loudly(
-    config: EngineConfig, storage: Any, monkeypatch: pytest.MonkeyPatch, clock: Any
+    config: EngineConfig, storage: Any, monkeypatch: pytest.MonkeyPatch, clock: Any, engines: Any
 ) -> None:
     storage()
     clock(1.0)
+    engines(error=CaptureError("could not open camera 0"))
     monkeypatch.setattr(doctor_module, "enumerate_devices", list)
     monkeypatch.setattr(doctor_module, "ffmpeg_path", lambda: None)
     monkeypatch.setattr(doctor_module, "CameraSource", lambda _config: DeadSource())

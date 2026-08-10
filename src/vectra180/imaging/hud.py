@@ -61,6 +61,27 @@ class HUDRenderer:
     FONT = cv2.FONT_HERSHEY_SIMPLEX
 
     @staticmethod
+    def _shade_panel(frame: np.ndarray, x0: int, y0: int, x1: int, y1: int, weight: float) -> None:
+        """Darken one rectangle of ``frame`` in place, leaving the scene visible.
+
+        Only the rectangle is composited. The obvious way to write this is to
+        draw a filled box onto a copy of the whole frame and blend the two, but
+        then every pixel outside the box is blended with itself -- an identity
+        that costs a full-frame copy and a full-frame weighted add on every
+        recorded frame. At a full-size stereo resolution that is tens of
+        milliseconds spent to shade a caption.
+        """
+        height, width = frame.shape[:2]
+        x0, y0 = max(0, x0), max(0, y0)
+        x1, y1 = min(width, x1), min(height, y1)
+        if x1 <= x0 or y1 <= y0:
+            return
+        panel = frame[y0:y1, x0:x1]
+        shade = np.empty_like(panel)
+        shade[:] = HUDRenderer.DARK_BG
+        cv2.addWeighted(shade, weight, panel, 1.0 - weight, 0, panel)
+
+    @staticmethod
     def draw_telemetry_overlay(
         frame: np.ndarray,
         sample: TelemetrySample | None,
@@ -75,11 +96,9 @@ class HUDRenderer:
         box_h = int(280 * scale)
         pad = int(8 * scale)
 
-        # Composite the panel through addWeighted rather than drawing a solid
-        # box, so the scene stays readable underneath it.
-        overlay = frame.copy()
-        cv2.rectangle(overlay, (pad, pad), (pad + box_w, pad + box_h), HUDRenderer.DARK_BG, -1)
-        cv2.addWeighted(overlay, 0.75, frame, 0.25, 0, frame)
+        # Composite the panel rather than drawing a solid box, so the scene
+        # stays readable underneath it.
+        HUDRenderer._shade_panel(frame, pad, pad, pad + box_w + 1, pad + box_h + 1, 0.75)
 
         title_scale = 0.7 * scale
         sub_scale = 0.35 * scale
@@ -240,9 +259,7 @@ class HUDRenderer:
         margin = int(10 * scale)
         top = height - text_h - baseline - 2 * margin
 
-        overlay = frame.copy()
-        cv2.rectangle(overlay, (0, top), (text_w + 2 * margin, height), HUDRenderer.DARK_BG, -1)
-        cv2.addWeighted(overlay, 0.6, frame, 0.4, 0, frame)
+        HUDRenderer._shade_panel(frame, 0, top, text_w + 2 * margin + 1, height, 0.6)
         cv2.putText(
             frame,
             text,

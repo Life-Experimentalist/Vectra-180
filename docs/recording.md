@@ -67,6 +67,7 @@ sequenceDiagram
         Rec->>FS: prune()
         Rec->>FS: open VEC_<next>.mp4
     end
+    Rec->>Rec: prepare(frame): downscale, crop, burn clock
     Rec->>FS: writer.write(frame)
     Rec->>Rec: append sample to sidecar buffer
 ```
@@ -74,8 +75,15 @@ sequenceDiagram
 ### The queue never blocks
 
 `submit()` is `put_nowait` onto a queue holding roughly two seconds of frames
-(`max(2, int(fps * 2.0))`). When it fills, the frame is dropped and
-`dropped_frames` is incremented.
+(`max(2, int(fps * 2.0))`) and at most 256 MB of pixels. When either bound is
+reached, the frame is dropped and `dropped_frames` is incremented.
+
+The byte bound exists because seconds are not a fixed amount of memory. Frames
+are queued as they came off the sensor, and a 4000×1200 frame is 14 MB — two
+seconds of those is most of a gigabyte, enough for the kernel to kill a 4 GB CM5
+before the encoder recovers. An empty queue always accepts, even a frame larger
+than the whole budget, so an unusual resolution records slowly rather than not at
+all.
 
 That is the trade. Encoding is always the slowest step on a CM5 — there is no
 hardware H.264 block, so libx264 runs on the Cortex-A76 cores. A blocking handoff
@@ -128,7 +136,8 @@ encoder. There is no bitrate control on this path.
 ```mermaid
 flowchart LR
     RAW["raw frame<br/>2560×720"] --> STRIP["strip_metadata()<br/>drop 30px"]
-    STRIP --> SCALE["downscale()<br/><i>if scale &lt; 1.0</i>"]
+    STRIP --> Q[["bounded queue"]]
+    Q --> SCALE["downscale()<br/><i>if scale &lt; 1.0</i>"]
     SCALE --> EVEN["crop_to_even()<br/>H.264 needs even dims"]
     EVEN --> BURN["burn local timestamp<br/><i>if burn_timestamp</i>"]
     BURN --> ENC["encoder"]
@@ -136,6 +145,12 @@ flowchart LR
     STRIP --> PUB["published snapshot<br/><b>clean</b>"]
     PUB -.->|"on request"| PREVIEW["preview · panorama · depth"]
 ```
+
+Everything from the queue rightwards runs on the **recorder** thread. A UVC
+driver does not buffer ahead — it hands over the frame that is ready when asked —
+so a capture loop that stops to prepare the frame it just read is not waiting
+when the next one lands, and waits a whole interval for the one after it. On a
+4000×1200 module, doing this work inline cost a third of the frame rate.
 
 The recorded frame is the raw side-by-side picture — **not** the panorama.
 Dewarping is lossy and parameterised by a guess about your lens; the recording
@@ -164,8 +179,10 @@ Halving the scale quarters the encoder's work. It costs resolution in the
 recording only: `scale` is applied after the snapshot is published, so preview,
 panorama, depth and the HUD keep working from the full frame.
 
-Change it, then run `vectra180 doctor` — the encoder benchmark applies the same
-scale, so its number is the one you will actually get.
+Change it, then run `vectra180 doctor`. The encoder benchmark applies the same
+scale, and the `pipeline` check records through the whole chain at that scale —
+that second number is the one you will actually get, because it is the only one
+measured with every stage running at once.
 
 ## Sidecars
 

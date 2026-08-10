@@ -135,9 +135,16 @@ class FFmpegWriter:
     def write(self, frame: np.ndarray) -> None:
         if self._closed or self._process.stdin is None:
             raise RecorderError("writer is closed")
-        data = np.ascontiguousarray(frame).tobytes()
-        if len(data) != self._frame_bytes:
-            raise RecorderError(f"frame is {len(data)} bytes, encoder expects {self._frame_bytes}")
+        # Handed to the pipe as a view of the frame's own memory. The obvious
+        # `ascontiguousarray(frame).tobytes()` copies a full frame twice, and
+        # both copies hold the interpreter lock -- which on a 2496x780 frame is
+        # a few milliseconds per frame stolen from the capture thread, long
+        # enough for it to miss the camera's next frame and wait for the one
+        # after. The copy is only paid when the frame really is a strided view.
+        contiguous = frame if frame.flags["C_CONTIGUOUS"] else np.ascontiguousarray(frame)
+        data = memoryview(contiguous).cast("B")
+        if data.nbytes != self._frame_bytes:
+            raise RecorderError(f"frame is {data.nbytes} bytes, encoder expects {self._frame_bytes}")
         try:
             self._process.stdin.write(data)
         except (BrokenPipeError, OSError) as exc:

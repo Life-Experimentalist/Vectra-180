@@ -54,8 +54,14 @@ fps = 30
 # that can start recording a different device without any error.
 backend = "auto"
 
-# Pixel format requested from the camera. MJPG is what makes 2560x720 at 30 fps
-# fit through USB 2.0 bandwidth; YUYV at this size negotiates down to ~5 fps.
+# Pixel format requested from the camera. MJPG is what makes a full-size stereo
+# frame at 30 fps fit through USB 2.0 bandwidth; YUYV at this size negotiates
+# down to a few fps.
+#
+# Set it to "" to leave the driver's own choice alone -- the format counterpart
+# of width/height = 0. Some modules reach their full rate only when nothing is
+# requested, because the request itself is what pins the slow mode. "doctor"
+# prints the format the driver actually settled on.
 fourcc = "MJPG"
 
 # Seconds to wait before reopening a camera that disappeared. A loose USB plug
@@ -155,8 +161,9 @@ bitrate_kbps = 8000
 # work and the difference between recording and dropping frames. Preview, depth
 # and the HUD are unaffected: they keep working from the full frame.
 #
-# Run `vectra180 doctor` after changing it; the encoder benchmark follows this
-# setting and will tell you whether the headroom is now real.
+# Run `vectra180 doctor` after changing it. The encoder benchmark follows this
+# setting, and the `pipeline` check records through the whole chain at it -- that
+# second number is the one that decides what reaches the card.
 scale = 1.0
 
 # Write a JSON sidecar of IMU samples beside each clip. This is where the

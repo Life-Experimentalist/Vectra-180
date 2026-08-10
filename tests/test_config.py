@@ -367,6 +367,20 @@ def test_invalid_values_are_rejected(section: type, kwargs: dict[str, object], m
         section(**kwargs).validate()
 
 
+def test_an_empty_fourcc_is_accepted(tmp_path: Path) -> None:
+    """ "Leave the format alone" has to be expressible.
+
+    It is the format counterpart of a zero width and height, and on some
+    modules the only setting that reaches full frame rate: requesting a format
+    at all is what pins them to a slower mode.
+    """
+    CameraConfig(fourcc="").validate()
+
+    config = EngineConfig.load(write_config(tmp_path, '[camera]\nfourcc = ""\n'), use_env=False)
+
+    assert config.camera.fourcc == ""
+
+
 def test_validation_runs_on_load(tmp_path: Path) -> None:
     """A bad file must fail at load, not at the first frame."""
     path = write_config(tmp_path, "[recording]\nsegment_seconds = 1\n")

@@ -143,10 +143,14 @@ class CameraSource:
         while still in YUYV mode silently lands on a much smaller mode.
 
         A width and height of zero mean "whatever the driver opens in", so the
-        resolution is left untouched rather than forced.
+        resolution is left untouched rather than forced. An empty FOURCC means
+        the same for the pixel format, and is not merely a way of expressing no
+        preference: on some modules the driver reaches its full rate on its own
+        and drops to a fraction of it the moment a format is requested.
         """
         cfg = self._config
-        capture.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter.fourcc(*cfg.fourcc))
+        if cfg.fourcc:
+            capture.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter.fourcc(*cfg.fourcc))
         if cfg.width and cfg.height:
             capture.set(cv2.CAP_PROP_FRAME_WIDTH, cfg.width)
             capture.set(cv2.CAP_PROP_FRAME_HEIGHT, cfg.height)
@@ -201,6 +205,28 @@ class CameraSource:
     def backend(self) -> str:
         return backend_name(self._backend) if self._capture is not None else "closed"
 
+    @property
+    def pixel_format(self) -> str:
+        """The format the driver settled on, or ``""`` if it will not say.
+
+        Deliberately not the requested format. A UVC driver substitutes the
+        nearest mode it has without saying so, so reporting the request would
+        be reporting a guess -- and the gap between the two is exactly what a
+        camera running at a fraction of its rate needs to be diagnosed.
+
+        Not every backend answers with a FOURCC: MediaFoundation returns its
+        own subtype number, and a closed device returns nothing. Neither is
+        four printable characters, so both are reported as unknown rather than
+        as mojibake.
+        """
+        if self._capture is None:
+            return ""
+        value = int(self._capture.get(cv2.CAP_PROP_FOURCC))
+        if value <= 0:
+            return ""
+        text = "".join(chr((value >> (8 * shift)) & 0xFF) for shift in range(4))
+        return text if text.isprintable() else ""
+
     def describe(self) -> dict[str, Any]:
         return {
             "open": self.is_open,
@@ -209,7 +235,8 @@ class CameraSource:
             "height": self.height,
             "fps": round(self.fps, 2),
             "device": self._config.device or self._config.index,
-            "fourcc": self._config.fourcc,
+            "fourcc": self._config.fourcc or "auto",
+            "pixel_format": self.pixel_format or "unknown",
         }
 
     # -- reading -----------------------------------------------------------

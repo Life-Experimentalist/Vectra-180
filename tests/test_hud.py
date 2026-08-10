@@ -201,3 +201,55 @@ def test_timestamp_bar_scales_with_width() -> None:
 
     assert _drawn(small) > 0
     assert _drawn(large) > _drawn(small)
+
+
+def test_only_the_captioned_corner_is_touched() -> None:
+    """The shading is a corner panel, not a whole-frame composite.
+
+    Compositing the entire frame to darken one caption is the expensive way to
+    get an identical picture, so the cheap way has to be pinned by a test that
+    fails if anyone reaches for ``frame.copy()`` again: every pixel to the
+    right of the caption must come back bit-for-bit unchanged.
+    """
+    canvas = np.full((360, 640, 3), 200, dtype=np.uint8)
+    before = canvas.copy()
+
+    HUDRenderer.draw_timestamp_bar(canvas, "12:00:00")
+
+    changed_columns = np.flatnonzero((canvas != before).any(axis=(0, 2)))
+    changed_rows = np.flatnonzero((canvas != before).any(axis=(1, 2)))
+    assert changed_columns.size and changed_rows.size
+    # Bottom-left corner only: the caption cannot have reached the right edge
+    # or the top half of a 640x360 frame.
+    assert changed_columns.max() < 320
+    assert changed_rows.min() > 180
+    assert np.array_equal(canvas[:, changed_columns.max() + 1 :], before[:, changed_columns.max() + 1 :])
+
+
+@pytest.mark.parametrize("shape", [(40, 60), (12, 8), (4, 1)])
+def test_a_frame_smaller_than_the_caption_is_still_drawn(shape: tuple[int, int]) -> None:
+    """A panel wider or taller than the frame is clipped, not an IndexError.
+
+    The preview can be asked for any size, and the shading rectangle is sized
+    from the text rather than from the frame, so on a small enough frame it
+    runs off both edges.
+    """
+    canvas = np.zeros((*shape, 3), dtype=np.uint8)
+
+    result = HUDRenderer.draw_timestamp_bar(canvas, "2026-08-09 14:30:00")
+
+    assert result.shape == (*shape, 3)
+
+
+def test_a_panel_entirely_off_the_frame_draws_nothing() -> None:
+    """A rectangle clipped to nothing must be skipped, not indexed as empty.
+
+    ``draw_telemetry_overlay`` sizes its panel from a 1280px reference, so on a
+    frame narrower than the panel's own left margin there is no rectangle left
+    once it is clipped.
+    """
+    canvas = np.zeros((4, 1, 3), dtype=np.uint8)
+
+    HUDRenderer.draw_telemetry_overlay(canvas, None, Orientation(0.0, 0.0, 0.0), fps=30.0)
+
+    assert canvas.shape == (4, 1, 3)

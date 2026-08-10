@@ -6,6 +6,15 @@ is always the slowest step -- stalls the queue instead of the camera. When the
 queue fills, frames are dropped and counted rather than buffered without limit;
 a dashcam that runs out of memory records nothing at all.
 
+Turning a captured frame into the pixels that go in the file -- the downscale,
+the burned clock -- happens on this thread too, through the ``prepare`` callable
+given to :meth:`SegmentRecorder.start`. It belongs here rather than in the
+caller because a UVC driver does not buffer: it hands over the frame that is
+ready when asked and the next one is not ready until the following interval, so
+every millisecond the capture loop spends on anything else risks missing a whole
+frame. Measured on a 4000x1200 module, doing this work in the capture loop cost
+a third of the frame rate.
+
 Footage is split into fixed-length segments. That bounds what a power cut can
 destroy to the segment in flight, and gives retention something to delete that
 is never the file being written.
@@ -18,6 +27,7 @@ import logging
 import queue
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -42,6 +52,13 @@ _STOP = object()
 #: covers before it stops being a real-time record. A little slack is
 #: unavoidable: the segment's clock starts before its first frame arrives.
 _CONTINUITY_TOLERANCE = 1.05
+
+#: Ceiling on the frames waiting to be encoded, in bytes. The queue is sized in
+#: seconds of footage, but seconds are not a fixed amount of memory: a 4000x1200
+#: frame is 14 MB, so two seconds of them is most of a gigabyte and a 4 GB CM5
+#: would be killed by the kernel long before the encoder recovered. Dropping
+#: frames under that pressure is the whole point of a bounded queue.
+_MAX_QUEUE_BYTES = 256 * 1024 * 1024
 
 
 @dataclass
@@ -115,6 +132,11 @@ class SegmentRecorder:
         self._queue: queue.Queue[Any] = queue.Queue(maxsize=1)
         self._thread: threading.Thread | None = None
         self._lock = threading.Lock()
+        self._prepare: Callable[[np.ndarray, float], np.ndarray] | None = None
+        #: Bytes currently sitting in the queue, and its own lock: the frame
+        #: count alone does not bound memory when frame sizes differ by 3x.
+        self._queued_bytes = 0
+        self._bytes_lock = threading.Lock()
         self._segment: _Segment | None = None
         self._previous_path: Path | None = None
         self._size: tuple[int, int] = (0, 0)
@@ -124,8 +146,24 @@ class SegmentRecorder:
 
     # -- lifecycle ---------------------------------------------------------
 
-    def start(self, size: tuple[int, int], fps: float) -> None:
+    def start(
+        self,
+        size: tuple[int, int],
+        fps: float,
+        *,
+        prepare: Callable[[np.ndarray, float], np.ndarray] | None = None,
+    ) -> None:
         """Begin recording frames of the given size and rate.
+
+        Args:
+            size: Geometry of the frames the writer will be opened with. When
+                ``prepare`` is given this is the size it *returns*, not the
+                size submitted.
+            fps: Frame rate declared to the encoder.
+            prepare: Applied to each frame on the recorder thread, as
+                ``prepare(image, wall_time)``, to produce the pixels written to
+                the file. Keeping it here rather than at the call site is what
+                stops the per-frame pixel work from stealing capture time.
 
         Raises:
             RecorderError: if already running.
@@ -136,7 +174,9 @@ class SegmentRecorder:
         storage.ensure_directories(self._config)
         self._size = size
         self._fps = max(1.0, fps)
+        self._prepare = prepare
         self._queue = queue.Queue(maxsize=max(2, int(self._fps * self._queue_seconds)))
+        self._queued_bytes = 0
         self._running = True
         self._thread = threading.Thread(target=self._run, name="vectra-recorder", daemon=True)
         self._thread.start()
@@ -176,6 +216,10 @@ class SegmentRecorder:
     ) -> bool:
         """Queue a frame for encoding.
 
+        The frame is queued as captured; any downscale or overlay happens on
+        the recorder thread through the ``prepare`` callable, so this returns
+        without touching a pixel.
+
         Returns:
             ``True`` if queued, ``False`` if the queue was full and the frame
             was dropped. Never blocks.
@@ -188,9 +232,20 @@ class SegmentRecorder:
             wall_time=time.time() if wall_time is None else wall_time,
             sample=sample,
         )
+        nbytes = image.nbytes
+        with self._bytes_lock:
+            # An empty queue always accepts, even for a frame bigger than the
+            # whole budget: refusing it would drop every frame forever rather
+            # than record a large one slowly.
+            if self._queued_bytes and self._queued_bytes + nbytes > _MAX_QUEUE_BYTES:
+                self.stats.dropped_frames += 1
+                return False
+            self._queued_bytes += nbytes
         try:
             self._queue.put_nowait(item)
         except queue.Full:
+            with self._bytes_lock:
+                self._queued_bytes -= nbytes
             self.stats.dropped_frames += 1
             return False
         return True
@@ -226,6 +281,8 @@ class SegmentRecorder:
                 item = self._queue.get()
                 if item is _STOP:
                     break
+                with self._bytes_lock:
+                    self._queued_bytes -= item.image.nbytes
                 try:
                     self._write(item)
                 except RecorderError as exc:
@@ -247,7 +304,8 @@ class SegmentRecorder:
         if segment is None:
             segment = self._open_segment(item)
 
-        segment.writer.write(item.image)
+        image = item.image if self._prepare is None else self._prepare(item.image, item.wall_time)
+        segment.writer.write(image)
         segment.frames += 1
         segment.last_monotonic = item.monotonic
         self.stats.written_frames += 1

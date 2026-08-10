@@ -50,7 +50,7 @@ in half.
 | **Web interface** | Live MJPEG preview, clip browser, downloads, storage meter and a lock button — all from one self-contained page, no internet needed. |
 | **Panoramic view** | Both eyes dewarped, joined and levelled on the horizon, on request. Clips stay raw. |
 | **Depth on demand** | Stereo disparity from the two lenses, computed per request rather than per frame. |
-| **`vectra180 doctor`** | Eight checks against the real capture and encode path, each failure printed with the command that fixes it. |
+| **`vectra180 doctor`** | Nine checks against the real capture and encode path — ending with five seconds of actual recording — each failure printed with the command that fixes it. |
 
 ## Install
 

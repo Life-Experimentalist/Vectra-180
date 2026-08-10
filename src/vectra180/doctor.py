@@ -14,6 +14,7 @@ clip with two thirds of its frames missing.
 
 from __future__ import annotations
 
+import copy
 import logging
 import platform
 import shutil
@@ -31,6 +32,7 @@ import numpy as np
 from vectra180 import __version__
 from vectra180.capture import CameraSource, enumerate_devices
 from vectra180.config import EngineConfig
+from vectra180.engine import Engine
 from vectra180.errors import CaptureError, RecorderError
 from vectra180.imaging import crop_to_even, downscale, strip_metadata
 from vectra180.recorder import create_writer, ffmpeg_path, storage_stats
@@ -66,6 +68,10 @@ _KEPT_FRAMES = 6
 #: Measured rate below this fraction of the configured rate is reported as a
 #: problem rather than noise.
 _RATE_TOLERANCE = 0.8
+
+#: Seconds the end-to-end check records for. Long enough to get past the first
+#: keyframe and settle, short enough that `doctor` still feels like a check.
+_PIPELINE_SECONDS = 5.0
 
 
 @dataclass(frozen=True)
@@ -265,12 +271,25 @@ def _check_camera(report: Report, config: EngineConfig) -> list[np.ndarray]:
                 f"and camera.height = {height} to match it, or set both to 0 to accept its native mode",
             )
         elif measured < config.camera.fps * _RATE_TOLERANCE:
+            # A raw format cannot carry a full-size stereo frame at 30 fps, so
+            # the pixel format is the first thing to look at. Which way to move
+            # it is not obvious: some modules ignore the request and stay in
+            # the slow mode, and a few reach their full rate only when nothing
+            # is asked for at all. The driver's own answer is quoted rather
+            # than guessed at, because that gap is the whole diagnosis.
+            settled = (
+                f"the driver settled on {source.pixel_format}"
+                if source.pixel_format
+                else "the driver will not say which format it settled on"
+            )
             report.add(
                 "camera",
                 WARN,
                 detail,
-                "the USB link or the pixel format is the bottleneck; MJPG is required for "
-                "2560x720 and a USB 3 port helps",
+                f"the USB link or the pixel format is the bottleneck: camera.fourcc asked for "
+                f"{config.camera.fourcc or 'nothing'} and {settled}. MJPG is what most modules need to "
+                f'carry a full-size stereo frame, but some reach their full rate only with fourcc = "" '
+                f"-- try both, and use a USB 3 port",
             )
         else:
             report.add("camera", OK, detail)
@@ -316,8 +335,15 @@ def _check_telemetry(report: Report, config: EngineConfig, images: list[np.ndarr
             "telemetry",
             WARN,
             "no IMU block decoded from the metadata strip",
-            "not every dual-fisheye module embeds telemetry. Set telemetry.enabled = false "
-            "to stop looking, or telemetry.metadata_width if the strip is a different width",
+            # Turning telemetry off is the obvious move and the wrong one on a
+            # module that writes a block this decoder cannot read: cropping is
+            # gated on the same switch, so disabling it leaves the block burned
+            # into every recorded frame. Look at the picture before choosing.
+            "not every dual-fisheye module embeds this IMU block, and some write a different "
+            "one into the same corner. Look at the leading columns with 'vectra180 view': if "
+            "they carry a machine-written block, set telemetry.metadata_width to its real width "
+            "so it is cropped out of the recording. Set telemetry.enabled = false only if they "
+            "are ordinary picture, since that also stops the cropping",
         )
         return
 
@@ -452,12 +478,24 @@ def _check_encoder(report: Report, config: EngineConfig, images: list[np.ndarray
         # Ordered by what wins most: on a machine without ffmpeg the OpenCV
         # writer has no bitrate control and spends the difference on the disk,
         # so installing it is worth more than any setting below it.
+        #
+        # recording.scale then comes before camera.width/height because it
+        # keeps the camera in its native mode. Asking the camera for a smaller
+        # picture instead lands on a cropped sensor mode on many modules,
+        # narrowing the very field of view a dashcam is there for -- and on a
+        # module with only one mode it does nothing at all.
+        #
+        # Encoder cost tracks pixel count, which is the square of the scale, so
+        # the suggestion is a starting point rather than a promise; the tenth
+        # off is headroom for a warm cabin. The benchmark ran at the current
+        # scale, so it multiplies rather than replaces it.
+        suggested = max(0.1, round(config.recording.scale * (rate / config.camera.fps) ** 0.5 * 0.9, 2))
         remedy = "the encoder cannot keep up and frames will be dropped. "
-        if ffmpeg_path() is None:
-            remedy += "Install ffmpeg, then lower "
-        else:
-            remedy += "Lower "
-        remedy += "camera.fps or camera.width/height, or keep recording.preset at 'ultrafast'"
+        remedy += "Install ffmpeg, then set " if ffmpeg_path() is None else "Set "
+        remedy += f"recording.scale to about {suggested} to encode fewer pixels from the same field of view"
+        if config.recording.preset != "ultrafast":
+            remedy += ", and recording.preset to 'ultrafast'"
+        remedy += ", or lower camera.fps"
         report.add("encoder", FAIL, detail, remedy)
     elif rate < config.camera.fps / _RATE_TOLERANCE:
         report.add(
@@ -468,6 +506,69 @@ def _check_encoder(report: Report, config: EngineConfig, images: list[np.ndarray
         )
     else:
         report.add("encoder", OK, detail)
+
+
+def _check_pipeline(report: Report, config: EngineConfig) -> None:
+    """Measure capture, prepare and encode running at the same time.
+
+    The camera and encoder checks each time their own stage with nothing else
+    running, and two comfortable numbers do not add up to a comfortable
+    pipeline: the stages share cores, memory bandwidth and one interpreter
+    lock. A module measured at 32 fps feeding an encoder measured at 150 has
+    been seen to record at 19. This is the figure that decides what reaches the
+    card, so it is measured rather than inferred from the other two.
+    """
+    if not config.recording.enabled:
+        report.add("pipeline", OK, "skipped -- recording is disabled")
+        return
+
+    probe = copy.deepcopy(config)
+    workspace = Path(tempfile.mkdtemp(prefix="vectra-pipeline-"))
+    probe.recording.directory = workspace
+    # Nothing may watch the preview during the benchmark: a viewer would be
+    # measured as part of the pipeline and make it look slower than it is.
+    probe.server.enabled = False
+    engine = Engine(probe)
+    try:
+        engine.start()
+        engine.begin_recording()
+        started = time.monotonic()
+        before = engine.recorder.stats.written_frames
+        time.sleep(_PIPELINE_SECONDS)
+        elapsed = time.monotonic() - started
+    except (CaptureError, RecorderError) as exc:
+        report.add("pipeline", FAIL, f"end-to-end recording failed: {exc}")
+        return
+    finally:
+        # Stopping drains the queue, which is why the counters are read after
+        # it rather than before. Up to two seconds of frames sit in that queue
+        # at any moment -- neither written nor dropped -- and on a five-second
+        # window that is a third of them.
+        engine.stop()
+        shutil.rmtree(workspace, ignore_errors=True)
+
+    written = engine.recorder.stats.written_frames - before
+    dropped = engine.recorder.stats.dropped_frames
+    rate = written / elapsed if elapsed > 0 else 0.0
+    detail = f"{rate:.1f} fps captured, prepared and encoded together ({config.camera.fps} requested)"
+    if dropped:
+        detail += f", {dropped} frame(s) dropped"
+
+    if rate >= config.camera.fps * _RATE_TOLERANCE:
+        report.add("pipeline", OK, detail)
+        return
+
+    # Falling short is not just lost detail. The clip declares the requested
+    # rate in its header, so footage arriving slower than that plays faster
+    # than the road went by -- which is why the sidecar marks these clips
+    # discontinuous. Matching camera.fps to what the machine sustains fixes the
+    # playback speed; lowering the scale is what actually buys the rate back.
+    remedy = (
+        f"the whole pipeline is slower than the camera alone, so clips play faster than real time "
+        f"and their sidecars are marked discontinuous. Lower recording.scale to encode fewer pixels, "
+        f"or set camera.fps to about {max(1, int(rate))} so the header matches what is recorded"
+    )
+    report.add("pipeline", WARN if rate >= config.camera.fps * 0.5 else FAIL, detail, remedy)
 
 
 def _check_server(report: Report, config: EngineConfig) -> None:
@@ -511,4 +612,5 @@ def run_diagnostics(config: EngineConfig, *, probe_camera: bool = True) -> Repor
     images = _check_camera(report, config)
     _check_telemetry(report, config, images)
     _check_encoder(report, config, images)
+    _check_pipeline(report, config)
     return report

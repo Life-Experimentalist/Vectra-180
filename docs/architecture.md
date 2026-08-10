@@ -46,7 +46,8 @@ flowchart TB
 
     subgraph recorder["Recorder thread — vectra-recorder"]
         direction TB
-        QUEUE[["bounded queue<br/>2 seconds deep"]] --> WRITE["FrameWriter.write()"]
+        QUEUE[["bounded queue<br/>2 seconds, 256 MB"]] --> PREP["downscale · burn clock"]
+        PREP --> WRITE["FrameWriter.write()"]
         WRITE --> ROLL{"segment<br/>expired?"}
         ROLL -->|yes| CLOSE["close · sidecar · prune"]
         ROLL -->|no| WRITE
@@ -73,11 +74,35 @@ The capture thread is a daemon, so a hung camera read cannot keep the process
 alive at shutdown. The recorder thread is joined with a timeout, because it has
 a file to finalise and an unclosed MP4 has no `moov` atom — an unplayable clip.
 
+### The capture thread does nothing but capture
+
+Frames are submitted as they came off the sensor. The downscale and the burned
+clock happen on the recorder thread, through a `prepare` callable the engine
+hands to `SegmentRecorder.start()`.
+
+That split is not stylistic. A UVC driver does not buffer ahead: it hands over
+the frame that is ready when asked, and the next one is not ready until the
+following interval. A capture loop that spends a few milliseconds preparing the
+frame it just read is not waiting in `read()` when the next one lands, so it
+waits for the one after that — a whole frame lost to a millisecond of work. On a
+4000×1200 module, doing this work inline cost a third of the frame rate.
+
+The same contract is why `prepare` must not draw into the array it is given: the
+engine publishes that array as the live snapshot, so writing to it would burn
+the clock into the preview and into the disparity map.
+
 ### The queue is the shock absorber
 
 `SegmentRecorder.submit()` never blocks. It is `put_nowait` onto a queue holding
 roughly two seconds of frames; when that fills, the frame is dropped and
 `dropped_frames` is incremented.
+
+The queue is bounded twice — by frame count and by 256 MB of pixels — because
+seconds are not a fixed amount of memory. A 4000×1200 frame is 14 MB, so two
+seconds of them is most of a gigabyte, and a 4 GB CM5 would be killed by the
+kernel long before the encoder caught up. An empty queue always accepts, even a
+frame larger than the whole budget, so an unusual resolution records slowly
+rather than not at all.
 
 That is a deliberate trade. On a CM5 there is no hardware H.264 encoder — libx264
 runs on the Cortex-A76 cores — so encoding is always the slowest step. A blocking
@@ -156,8 +181,8 @@ sequenceDiagram
         Eng->>Rec: lock_current(source)
     end
     opt recorder running
-        Eng->>Eng: crop_to_even() + burn local timestamp
         Eng->>Rec: submit(image, monotonic, wall_time, sample)
+        Note over Rec: downscale, crop_to_even and the<br/>burned clock run on the recorder thread
     end
     Eng->>Snap: publish EngineSnapshot under a lock
 ```
@@ -181,6 +206,10 @@ flowchart LR
         A1["read"] --> A2["decode telemetry"] --> A3["orientation"] --> A4["incident check"] --> A5["queue for encoding"]
     end
 
+    subgraph rec["Every recorded frame — recorder thread"]
+        C1["downscale"] --> C2["crop to even"] --> C3["burn clock"] --> C4["encode"]
+    end
+
     subgraph ondemand["Only when asked — HTTP threads"]
         B1["JPEG encode"]
         B2["panorama: dewarp ×2 · stitch · level"]
@@ -189,6 +218,7 @@ flowchart LR
     end
 
     always -.->|"published snapshot"| ondemand
+    always -.->|"bounded queue"| rec
 ```
 
 `compute_depth` is the expensive one — two dewarps and a semi-global block match.

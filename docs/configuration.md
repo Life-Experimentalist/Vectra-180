@@ -69,7 +69,7 @@ How the dual-fisheye UVC device is opened.
 | `height` | `720` | `VECTRA_CAPTURE_HEIGHT` | ≥ 0; must be `0` if `width` is |
 | `fps` | `30` | `VECTRA_CAPTURE_FPS` | Must be positive |
 | `backend` | `"auto"` | `VECTRA_CAPTURE_BACKEND` | One of `auto`, `any`, `v4l2`, `dshow`, `msmf`, `avfoundation`, `gstreamer`. An unknown name is a config error; a known name this OpenCV build lacks is rejected at startup |
-| `fourcc` | `"MJPG"` | `VECTRA_CAPTURE_FOURCC` | Exactly four characters |
+| `fourcc` | `"MJPG"` | `VECTRA_CAPTURE_FOURCC` | Exactly four characters, or `""` to leave the driver's own choice alone |
 | `reconnect_delay` | `2.0` | — | Seconds between reconnect attempts. Must be ≥ 0 |
 | `read_failure_limit` | `30` | — | Consecutive failed reads before the source is declared disconnected. Must be ≥ 1 |
 
@@ -110,9 +110,19 @@ without saying so. Both must be `0` together; one alone is a config error.
 `vectra180 doctor` reports the size the driver actually opened and, when it
 differs from the request, prints the two lines to paste into the config.
 
-**`fourcc` almost always has to stay `MJPG`.** YUYV cannot sustain 2560×720 at
-30 fps over USB 2.0 — the bandwidth simply is not there — so a UVC camera asked
-for YUYV at that size will silently negotiate down to something much slower.
+**`fourcc` usually has to stay `MJPG`.** YUYV cannot sustain a full-size stereo
+frame at 30 fps — the bandwidth simply is not there — so a UVC camera asked for
+YUYV at that size will silently negotiate down to something much slower.
+
+**If the rate is still low, try `fourcc = ""`.** An empty value is the format
+counterpart of `width`/`height` set to `0`: the format is not requested at all
+and whatever the driver opens in is used. This is not merely a way of saying
+"no preference" — on some modules the request is itself what pins the slow mode,
+and they reach full rate only when nothing is asked for. `vectra180 doctor`
+prints the format the driver actually settled on next to the one that was
+requested, and `/api/status` reports both as `fourcc` and `pixel_format`. Some
+backends will not name a format at all — MediaFoundation answers with an
+internal number rather than a FOURCC — and report `unknown`.
 
 **`read_failure_limit` is a count, not a timeout.** At 30 fps the default is
 about a second of failed reads before the source closes and reopens. Reconnection

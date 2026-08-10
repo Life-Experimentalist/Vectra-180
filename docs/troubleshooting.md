@@ -7,8 +7,9 @@ vectra180 doctor
 ```
 
 Every check exercises the real path — the camera is opened, frames are read, the
-encoder is timed at the resolution the camera actually produced, and the
-recording volume is written to. Most of what follows is a longer explanation of
+encoder is timed at the resolution the camera actually produced, the recording
+volume is written to, and the whole chain is then run together for five seconds
+to see what it sustains. Most of what follows is a longer explanation of
 something `doctor` has already told you in one line.
 
 ---
@@ -89,10 +90,30 @@ width = 0
 height = 0
 ```
 
-**Otherwise this is nearly always a `fourcc` problem** — YUYV cannot sustain
-2560×720 at 30 fps over USB 2.0, so a camera asked for YUYV at that size will
-negotiate down to something it can do. `MJPG` is the default for exactly this
-reason.
+**Otherwise this is nearly always a `fourcc` problem** — YUYV cannot sustain a
+full-size stereo frame at 30 fps over USB 2.0, so a camera asked for YUYV at
+that size will negotiate down to something it can do. `MJPG` is the default for
+exactly this reason.
+
+If the camera is already on `MJPG` and still slow, check what it actually
+negotiated. `doctor` quotes the driver's own answer next to the request:
+
+```
+[warn] camera: 4000x1200 via msmf, 11.3 fps measured (30 requested)
+       -> the USB link or the pixel format is the bottleneck: camera.fourcc
+          asked for MJPG and the driver settled on YUY2
+```
+
+A driver that substitutes like this is not going to be talked out of it, and on
+some modules the request is itself what pins the slow mode. Stop asking:
+
+```toml
+[camera]
+fourcc = ""
+```
+
+That leaves the format to the driver, the same way `width = 0` leaves the size
+to it.
 
 ### `this OpenCV build has no gstreamer support`
 
@@ -146,7 +167,7 @@ sudo journalctl -u vectra180 -n 50
 |---|---|
 | `could not bind 0.0.0.0:8080: Address already in use` | Something else has the port, or a previous instance is still shutting down |
 | `config file not found` | `--config` or `VECTRA_CONFIG` points at a file that does not exist |
-| `camera.fourcc must be exactly four characters` | A config value is invalid. The message names the key |
+| `camera.fourcc must be exactly four characters ... or empty` | A config value is invalid. The message names the key |
 | `no such file or directory: /var/lib/vectra180/recordings` | The recording directory is missing or not owned by the service user |
 
 Config errors are reported as one line and exit `1`. They are user mistakes, not
@@ -264,9 +285,10 @@ permanently.
 Visible in `/api/status`, on the HUD, and in the summary `run` prints on exit.
 
 **Dropped frames mean the encoder cannot keep up.** The recorder's queue holds
-about two seconds of footage; when it fills, `submit()` drops the frame rather
-than blocking the camera or growing without limit. Nothing is wrong with the
-camera — the frames arrived and there was nowhere to put them.
+about two seconds of footage, and no more than 256 MB of it; when either bound is
+reached, `submit()` drops the frame rather than blocking the camera or growing
+without limit. Nothing is wrong with the camera — the frames arrived and there
+was nowhere to put them.
 
 The Compute Module 5 has **no hardware H.264 encoder**. libx264 runs on the
 Cortex-A76 cores, and 2560×720 at 30 fps is genuinely close to the limit.
@@ -298,6 +320,37 @@ heatsink, and a throttled CM5 drops frames it handled fine on the bench. See
 [Thermals](../deploy/README.md#8-thermals).
 
 Background load matters too — a system update running mid-drive is enough.
+
+---
+
+## Clips play back faster than the drive happened
+
+```
+[warn] pipeline: 19.4 fps captured, prepared and encoded together (30 requested)
+         -> the whole pipeline is slower than the camera alone, so clips play faster
+            than real time and their sidecars are marked discontinuous. Lower
+            recording.scale to encode fewer pixels, or set camera.fps to about 19 so
+            the header matches what is recorded
+```
+
+A clip's header declares `camera.fps`. If the machine only sustains 19 of those
+30 frames, the file still says 30, so a minute of road plays back in thirty-eight
+seconds — and the sidecar's `continuous` flag is `false` because `covers_seconds`
+does not match `duration_seconds`.
+
+This can happen while the `camera` and `encoder` checks are both green. Those
+time one stage each with nothing else running; the `pipeline` check is the one
+that runs them together, and contention between them is real.
+
+Two different fixes, and they do different things:
+
+| Change | Effect |
+|---|---|
+| `recording.scale` down | Encodes fewer pixels, so the rate actually comes back up |
+| `camera.fps` down to the measured rate | Rate is unchanged, but the header now matches, so playback speed is correct |
+
+Do both: lower the scale until `pipeline` reports close to the rate you want, then
+leave `camera.fps` at that rate.
 
 ---
 

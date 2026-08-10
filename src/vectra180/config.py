@@ -153,8 +153,11 @@ class CameraConfig:
     fps: int = 30
     #: ``auto`` picks V4L2 on Linux, DirectShow on Windows, AVFoundation on macOS.
     backend: str = "auto"
-    #: Requested pixel format. MJPG is required on most UVC devices to reach
-    #: 2560x720 at 30fps -- YUYV cannot sustain that over USB 2.0 bandwidth.
+    #: Requested pixel format. MJPG is what most UVC modules need to reach a
+    #: full-size stereo frame at 30fps, because raw YUYV cannot sustain that
+    #: bandwidth. Empty means "leave whatever the driver opens in", the format
+    #: counterpart of width and height set to 0: some modules reach their top
+    #: rate only when nothing is requested, and asking costs frames.
     fourcc: str = "MJPG"
     #: Seconds to wait between reconnect attempts after the stream drops.
     reconnect_delay: float = 2.0
@@ -179,8 +182,8 @@ class CameraConfig:
             raise ValueError("camera.width and camera.height must both be 0 (native mode) or both positive")
         if self.fps <= 0:
             raise ValueError("camera.fps must be positive")
-        if len(self.fourcc) != 4:
-            raise ValueError("camera.fourcc must be exactly four characters (e.g. MJPG)")
+        if self.fourcc and len(self.fourcc) != 4:
+            raise ValueError("camera.fourcc must be exactly four characters (e.g. MJPG), or empty to leave it alone")
         # Imported here rather than at module scope: vectra180.capture imports
         # this module, so a top-level import would close the loop.
         #

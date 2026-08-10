@@ -116,6 +116,10 @@ class ReplaySource:
     def backend(self) -> str:
         return "REPLAY"
 
+    @property
+    def pixel_format(self) -> str:
+        return "MJPG"
+
     def describe(self) -> dict[str, object]:
         return {
             "open": self.is_open,
@@ -125,6 +129,7 @@ class ReplaySource:
             "fps": self.fps,
             "device": "replay",
             "fourcc": "MJPG",
+            "pixel_format": self.pixel_format,
         }
 
     def frames(self, *, reconnect: bool = True) -> Iterator[Frame]:
