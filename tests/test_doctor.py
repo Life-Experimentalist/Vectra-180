@@ -360,6 +360,51 @@ def test_a_camera_at_the_configured_rate_passes(
     assert "30.0 fps measured (30 requested)" in check.detail
 
 
+def test_a_camera_streaming_flat_black_warns(
+    report: Report, config: EngineConfig, monkeypatch: pytest.MonkeyPatch, clock: Any
+) -> None:
+    """Right size, right rate, no picture -- the failure the numbers cannot see."""
+    clock(1.0)
+    dark = np.zeros_like(make_frame())
+    monkeypatch.setattr(doctor_module, "CameraSource", lambda _config: FakeCameraSource([dark], telemetry=False))
+
+    _check_camera(report, config)
+
+    check = named(report, "camera")
+    assert check.status == WARN
+    assert "one flat colour" in check.detail
+    assert "lens cap" in check.remedy
+
+
+def test_a_camera_repeating_one_image_warns(
+    report: Report, config: EngineConfig, monkeypatch: pytest.MonkeyPatch, clock: Any
+) -> None:
+    """A hung camera keeps answering; it just stops seeing."""
+    clock(1.0)
+    monkeypatch.setattr(
+        doctor_module, "CameraSource", lambda _config: FakeCameraSource([make_frame()], telemetry=False)
+    )
+
+    _check_camera(report, config)
+
+    check = named(report, "camera")
+    assert check.status == WARN
+    assert "every frame is identical" in check.detail
+
+
+def test_a_moving_picture_is_not_mistaken_for_a_hung_camera(
+    report: Report, config: EngineConfig, monkeypatch: pytest.MonkeyPatch, clock: Any
+) -> None:
+    """The check must not fire on a camera that is working."""
+    clock(1.0)
+    images = [make_frame(value=value) for value in (60, 90, 120)]
+    monkeypatch.setattr(doctor_module, "CameraSource", lambda _config: FakeCameraSource(images, telemetry=False))
+
+    _check_camera(report, config)
+
+    assert named(report, "camera").status == OK
+
+
 def test_a_camera_below_the_configured_rate_warns(
     report: Report, config: EngineConfig, monkeypatch: pytest.MonkeyPatch, clock: Any
 ) -> None:

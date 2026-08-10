@@ -223,7 +223,34 @@ def _check_camera(report: Report, config: EngineConfig) -> list[np.ndarray]:
         requested = (config.camera.width, config.camera.height)
         native = requested == (0, 0)
 
-        if not native and (width, height) != requested:
+        # A camera can open, answer at the right size and hit the right rate
+        # while recording nothing at all: a sensor that never exposes streams
+        # flat black, and a hung one repeats its last good frame forever.
+        # Neither shows up in the numbers above, so a dashcam left like this
+        # fills its disk with footage of nothing and nobody finds out until
+        # they need the clip. A real sensor always carries some noise, so a
+        # frame with a single value in it is broken rather than merely dark.
+        frames = list(recent)
+        blank = all(int(image.max()) == int(image.min()) for image in frames)
+        frozen = len(frames) > 1 and all(np.array_equal(frames[0], image) for image in frames[1:])
+
+        if blank:
+            report.add(
+                "camera",
+                WARN,
+                f"{detail}; every frame is one flat colour",
+                "the lens cap is on, the sensor is not exposing, or another program is muting the "
+                "stream -- look at the picture with 'vectra180 view' before trusting a recording",
+            )
+        elif frozen:
+            report.add(
+                "camera",
+                WARN,
+                f"{detail}; every frame is identical",
+                "the camera is repeating one image rather than streaming. Reconnect it, and give it a "
+                "port of its own if it is sharing a hub",
+            )
+        elif not native and (width, height) != requested:
             report.add(
                 "camera",
                 WARN,
