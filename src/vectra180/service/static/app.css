@@ -1,81 +1,197 @@
-/* Vectra-180 dashcam UI.
+/* Vectra-180 -- operator panel.
  *
  * Designed for a phone held in one hand at the side of a road: large targets,
- * high contrast, dark by default because the screen is often the brightest
- * object in a parked car at night. No external fonts or assets -- the Pi may
- * have no internet connection.
+ * high contrast, and dark by default because the screen is usually the
+ * brightest object in a parked car at night. Light mode exists because the
+ * same panel gets opened in daylight through a windscreen.
+ *
+ * No external fonts and no external assets. The Pi may have no route to the
+ * internet, so everything here has to arrive in the first two responses.
  */
 
+/* ---------------------------------------------------------------- tokens */
+
 :root {
-  --bg: #05070d;
-  --surface: #0b0f19;
-  --surface-2: #131a29;
-  --border: #1f2a3d;
-  --text: #e8eefc;
-  --muted: #94a3b8;
+  color-scheme: dark light;
+
+  --bg: #080b14;
+  --bg-2: #0b101c;
+  --surface: #111827;
+  --surface-2: #161f33;
+  --line: #1f2a3f;
+  --line-2: #2b3a55;
+  --text: #e9eefb;
+  --muted: #97a4bb;
+  /* Labels and timestamps sit at --dim. It is deliberately no darker than
+     this: at 4.87:1 on --surface it still clears WCAG AA for the small text
+     it is used on, which matters on a phone held up in daylight. */
+  --dim: #78879f;
   --accent: #00f2fe;
-  --danger: #ef4444;
+  --accent-ink: #04121a;
+  --danger: #f87171;
   --warn: #fbbf24;
   --ok: #34d399;
-  --radius: 12px;
+
+  --shadow: 0 1px 2px rgb(0 0 0 / 0.4), 0 8px 24px -12px rgb(0 0 0 / 0.6);
+  --ring: color-mix(in srgb, var(--accent) 40%, transparent);
+
+  /* Overlays sit on the viewport, which is black under both themes because
+     it is filled with video. They keep a fixed bright cyan rather than
+     following --accent, whose light-mode value is dark by design and would
+     vanish against the picture. */
+  --on-video: #4be3f5;
+
+  --mono: ui-monospace, "SF Mono", "Cascadia Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  --sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+
+  --rad: 14px;
+  --rad-sm: 10px;
   --tap: 44px;
+  --gutter: clamp(0.85rem, 3.5vw, 1.5rem);
+  --ease: cubic-bezier(0.22, 1, 0.36, 1);
 }
 
-* {
+:root[data-theme="light"] {
+  color-scheme: light;
+
+  --bg: #f5f7fb;
+  --bg-2: #ffffff;
+  --surface: #ffffff;
+  --surface-2: #f1f5fa;
+  --line: #dde5f0;
+  --line-2: #c5d1e2;
+  --text: #0d1526;
+  --muted: #4d5a6e;
+  --dim: #5f6e84;
+  /* Darker than the dark theme's cyan so white button text clears 4.5:1
+     against it; the bright cyan only works as ink, not as a fill. */
+  --accent: #0b6d80;
+  --accent-ink: #ffffff;
+  --danger: #c0392f;
+  --warn: #9a6206;
+  --ok: #05704f;
+
+  --shadow: 0 1px 2px rgb(13 21 38 / 0.06), 0 10px 28px -16px rgb(13 21 38 / 0.28);
+}
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    color-scheme: light;
+
+    --bg: #f5f7fb;
+    --bg-2: #ffffff;
+    --surface: #ffffff;
+    --surface-2: #f1f5fa;
+    --line: #dde5f0;
+    --line-2: #c5d1e2;
+    --text: #0d1526;
+    --muted: #4d5a6e;
+    --dim: #6f7d92;
+    --accent: #0891a5;
+    --accent-ink: #ffffff;
+    --danger: #c0392f;
+    --warn: #9a6206;
+    --ok: #05704f;
+
+    --shadow: 0 1px 2px rgb(13 21 38 / 0.06), 0 10px 28px -16px rgb(13 21 38 / 0.28);
+  }
+}
+
+/* ------------------------------------------------------------------ base */
+
+*,
+*::before,
+*::after {
   box-sizing: border-box;
 }
 
-html,
-body {
-  margin: 0;
-  background: var(--bg);
-  color: var(--text);
-  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-  font-size: 16px;
-  line-height: 1.5;
+html {
   -webkit-text-size-adjust: 100%;
 }
 
+body {
+  margin: 0;
+  min-height: 100dvh;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: 16px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+.sprite {
+  position: absolute;
+  width: 0;
+  height: 0;
+  overflow: hidden;
+}
+
 .mono {
-  font-family: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+  font-family: var(--mono);
   font-variant-numeric: tabular-nums;
 }
 
-/* --- header ------------------------------------------------------------ */
+/* Every icon is a stroked outline at a single weight -- the one decision that
+   keeps a hand-drawn sprite from looking like clip art. */
+.ico {
+  width: 1.15em;
+  height: 1.15em;
+  flex: none;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
 
-.bar {
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+/* --------------------------------------------------------------- top bar */
+
+.topbar {
   position: sticky;
   top: 0;
-  z-index: 10;
+  z-index: 20;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  padding: max(10px, env(safe-area-inset-top)) 16px 10px;
-  background: rgba(11, 15, 25, 0.92);
-  backdrop-filter: blur(10px);
-  border-bottom: 1px solid var(--border);
+  gap: 0.75rem;
+  padding: max(0.6rem, env(safe-area-inset-top)) var(--gutter) 0.6rem;
+  background: color-mix(in srgb, var(--bg-2) 82%, transparent);
+  backdrop-filter: saturate(1.4) blur(14px);
+  -webkit-backdrop-filter: saturate(1.4) blur(14px);
+  border-bottom: 1px solid var(--line);
 }
 
 .brand {
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  gap: 10px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  font-size: 0.95rem;
+  gap: 0.55rem;
+  min-width: 0;
 }
 
-.brand b {
+.wordmark {
+  font-weight: 750;
+  letter-spacing: 0.1em;
+  font-size: 0.82rem;
+}
+
+.wordmark b {
   color: var(--accent);
-  font-weight: 700;
+  font-weight: 750;
 }
 
 .mark {
-  width: 18px;
-  height: 18px;
-  border: 2px solid var(--accent);
+  width: 20px;
+  height: 20px;
+  flex: none;
   border-radius: 50%;
+  border: 2px solid var(--accent);
   position: relative;
 }
 
@@ -87,56 +203,63 @@ body {
   background: var(--accent);
 }
 
-.bar-status {
+.topbar-end {
   display: flex;
   align-items: center;
-  gap: 10px;
-  font-size: 0.82rem;
-  color: var(--muted);
+  gap: 0.5rem;
+  min-width: 0;
+}
+
+.fps {
+  font-size: 0.75rem;
+  color: var(--dim);
+  white-space: nowrap;
 }
 
 .pill {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 4px 10px;
+  gap: 0.4rem;
+  padding: 0.25rem 0.6rem;
   border-radius: 999px;
-  font-size: 0.72rem;
-  font-weight: 700;
-  letter-spacing: 0.06em;
+  font-size: 0.66rem;
+  font-weight: 750;
+  letter-spacing: 0.07em;
   border: 1px solid transparent;
+  white-space: nowrap;
 }
 
 .pill::before {
   content: "";
-  width: 8px;
-  height: 8px;
+  width: 7px;
+  height: 7px;
   border-radius: 50%;
   background: currentColor;
+  flex: none;
 }
 
 .pill-rec {
   color: var(--danger);
-  border-color: rgba(239, 68, 68, 0.4);
-  background: rgba(239, 68, 68, 0.12);
+  border-color: color-mix(in srgb, var(--danger) 40%, transparent);
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
 }
 
-/* The blink is the one animation that carries information rather than
-   decoration, so it survives reduced-motion as a static dot below. */
+/* The blink carries information rather than decoration, so it is the one
+   animation that stays meaningful when it is stopped -- the dot remains. */
 .pill-rec::before {
   animation: blink 1.4s ease-in-out infinite;
 }
 
 .pill-idle {
   color: var(--muted);
-  border-color: var(--border);
+  border-color: var(--line);
   background: var(--surface-2);
 }
 
 .pill-error {
   color: var(--warn);
-  border-color: rgba(251, 191, 36, 0.4);
-  background: rgba(251, 191, 36, 0.12);
+  border-color: color-mix(in srgb, var(--warn) 40%, transparent);
+  background: color-mix(in srgb, var(--warn) 12%, transparent);
 }
 
 @keyframes blink {
@@ -145,59 +268,110 @@ body {
   }
 }
 
-/* --- tabs -------------------------------------------------------------- */
-
-.tabs {
-  display: flex;
-  gap: 4px;
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--border);
-  background: var(--surface);
+.ghost-btn {
+  display: inline-grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  flex: none;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: var(--surface-2);
+  color: var(--muted);
+  cursor: pointer;
+  transition: color 0.18s var(--ease), border-color 0.18s var(--ease);
 }
 
-.tab {
+.ghost-btn:hover {
+  color: var(--accent);
+  border-color: var(--ring);
+}
+
+.ghost-btn .ico {
+  width: 1.05rem;
+  height: 1.05rem;
+}
+
+/* ------------------------------------------------------- segmented tabs */
+
+.segmented {
+  display: flex;
+  gap: 0.25rem;
+  margin: var(--gutter) auto 0;
+  padding: 0.25rem;
+  width: min(100% - 2 * var(--gutter), 480px);
+  border-radius: 999px;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+}
+
+.seg {
   flex: 1;
-  min-height: var(--tap);
+  min-height: 38px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
   border: 0;
-  border-radius: var(--radius);
+  border-radius: 999px;
   background: transparent;
   color: var(--muted);
   font: inherit;
+  font-size: 0.85rem;
   font-weight: 600;
   cursor: pointer;
+  transition: background 0.2s var(--ease), color 0.2s var(--ease);
 }
 
-.tab.is-active {
-  background: var(--surface-2);
+.seg.is-active {
+  background: var(--surface);
   color: var(--text);
-  box-shadow: inset 0 0 0 1px var(--border);
+  box-shadow: var(--shadow);
 }
 
-.tab:focus-visible,
-.btn:focus-visible,
-.chip:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
+.seg .ico {
+  width: 1rem;
+  height: 1rem;
 }
 
 main {
-  padding: 16px 12px calc(24px + env(safe-area-inset-bottom));
-  max-width: 900px;
-  margin: 0 auto;
+  width: min(100%, 960px);
+  margin-inline: auto;
+  padding: var(--gutter) var(--gutter) calc(2rem + env(safe-area-inset-bottom));
+  display: grid;
+  gap: 0.9rem;
 }
 
 .panel[hidden] {
   display: none;
 }
 
-/* --- live -------------------------------------------------------------- */
+.panel {
+  display: grid;
+  gap: 0.9rem;
+  animation: rise 0.32s var(--ease) both;
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+
+/* ------------------------------------------------------------ live stage */
+
+.stage {
+  position: relative;
+}
 
 .viewport {
   position: relative;
-  border-radius: var(--radius);
+  border-radius: var(--rad);
   overflow: hidden;
   background: #000;
-  border: 1px solid var(--border);
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow);
   aspect-ratio: 16 / 5;
   display: grid;
   place-items: center;
@@ -210,118 +384,203 @@ main {
   display: block;
 }
 
-.empty {
-  color: var(--muted);
-  text-align: center;
-  padding: 24px 16px;
-  margin: 0;
+/* Four hairline brackets. They read as a viewfinder and, unlike a border,
+   they do not compete with whatever is in the frame. */
+.corners i {
+  position: absolute;
+  width: 16px;
+  height: 16px;
+  border: 1.5px solid color-mix(in srgb, var(--on-video) 55%, transparent);
+  pointer-events: none;
 }
 
-.actions {
+.corners i:nth-child(1) {
+  top: 10px;
+  left: 10px;
+  border-right: 0;
+  border-bottom: 0;
+  border-top-left-radius: 4px;
+}
+
+.corners i:nth-child(2) {
+  top: 10px;
+  right: 10px;
+  border-left: 0;
+  border-bottom: 0;
+  border-top-right-radius: 4px;
+}
+
+.corners i:nth-child(3) {
+  bottom: 10px;
+  left: 10px;
+  border-right: 0;
+  border-top: 0;
+  border-bottom-left-radius: 4px;
+}
+
+.corners i:nth-child(4) {
+  bottom: 10px;
+  right: 10px;
+  border-left: 0;
+  border-top: 0;
+  border-bottom-right-radius: 4px;
+}
+
+.view-tag {
+  position: absolute;
+  right: 0.75rem;
+  bottom: 0.75rem;
+  padding: 0.2rem 0.5rem;
+  border-radius: 6px;
+  font-size: 0.62rem;
+  letter-spacing: 0.1em;
+  font-weight: 700;
+  color: var(--on-video);
+  background: rgb(0 0 0 / 0.55);
+  border: 1px solid color-mix(in srgb, var(--on-video) 30%, transparent);
+  pointer-events: none;
+}
+
+/* ------------------------------------------------------------- controls */
+
+.toolbar {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-  gap: 8px;
-  margin: 12px 0;
+  grid-template-columns: repeat(auto-fit, minmax(128px, 1fr));
+  gap: 0.5rem;
 }
 
 .btn {
   min-height: var(--tap);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--surface-2);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
+  padding-inline: 0.9rem;
+  border: 1px solid var(--line);
+  border-radius: var(--rad-sm);
+  background: var(--surface);
   color: var(--text);
   font: inherit;
+  font-size: 0.9rem;
   font-weight: 600;
   cursor: pointer;
-  transition: background 0.15s ease, transform 0.1s ease;
+  box-shadow: var(--shadow);
+  transition: border-color 0.18s var(--ease), color 0.18s var(--ease), transform 0.1s var(--ease);
+}
+
+.btn:hover {
+  border-color: var(--line-2);
 }
 
 .btn:active {
-  transform: scale(0.98);
+  transform: translateY(1px);
 }
 
 .btn-primary {
   background: var(--accent);
   border-color: var(--accent);
-  color: #04121a;
+  color: var(--accent-ink);
+}
+
+.btn-primary:hover {
+  border-color: var(--accent);
+  filter: brightness(1.08);
 }
 
 .btn[aria-pressed="true"] {
   border-color: var(--accent);
   color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface));
 }
 
-.grid {
+/* --------------------------------------------------------------- metrics */
+
+.metrics {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
-  gap: 8px;
+  grid-template-columns: repeat(auto-fit, minmax(112px, 1fr));
+  gap: 0.5rem;
 }
 
-.cell {
+.metric {
   background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--rad-sm);
+  padding: 0.6rem 0.75rem;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 0.1rem;
 }
 
 .label {
-  font-size: 0.7rem;
-  letter-spacing: 0.08em;
+  font-size: 0.64rem;
+  letter-spacing: 0.1em;
   text-transform: uppercase;
-  color: var(--muted);
+  color: var(--dim);
+  font-weight: 650;
 }
 
 .value {
-  font-size: 1.15rem;
-  font-weight: 600;
+  font-size: 1.2rem;
+  font-weight: 650;
+  letter-spacing: -0.01em;
 }
 
-/* --- clips ------------------------------------------------------------- */
+.hint {
+  margin: 0;
+  font-size: 0.8rem;
+  color: var(--dim);
+}
+
+/* ----------------------------------------------------------------- clips */
 
 .filters {
   display: flex;
-  gap: 8px;
-  margin-bottom: 12px;
+  gap: 0.4rem;
+  flex-wrap: wrap;
 }
 
 .chip {
-  min-height: 36px;
-  padding: 0 14px;
+  min-height: 34px;
+  padding: 0 0.85rem;
   border-radius: 999px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--line);
   background: var(--surface);
   color: var(--muted);
   font: inherit;
-  font-size: 0.85rem;
+  font-size: 0.82rem;
+  font-weight: 600;
   cursor: pointer;
+  transition: color 0.18s var(--ease), border-color 0.18s var(--ease);
 }
 
 .chip.is-active {
   color: var(--accent);
-  border-color: var(--accent);
+  border-color: var(--ring);
+  background: color-mix(in srgb, var(--accent) 9%, var(--surface));
 }
 
 .clips {
   list-style: none;
   margin: 0;
   padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
+  display: grid;
+  gap: 0.5rem;
 }
 
 .clip {
   background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--rad-sm);
+  padding: 0.75rem 0.85rem;
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 0.75rem;
   flex-wrap: wrap;
+  transition: border-color 0.18s var(--ease);
+}
+
+.clip:hover {
+  border-color: var(--line-2);
 }
 
 .clip-main {
@@ -331,62 +590,94 @@ main {
 
 .clip-name {
   font-weight: 600;
+  font-size: 0.88rem;
   overflow-wrap: anywhere;
 }
 
 .clip-meta {
-  font-size: 0.8rem;
-  color: var(--muted);
+  font-size: 0.76rem;
+  color: var(--dim);
 }
 
 .clip-actions {
   display: flex;
-  gap: 6px;
+  gap: 0.35rem;
 }
 
 .icon-btn {
-  min-height: 36px;
-  min-width: 36px;
-  padding: 0 10px;
+  min-height: 34px;
+  min-width: 34px;
+  padding: 0 0.6rem;
   border-radius: 8px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--line);
   background: var(--surface-2);
-  color: var(--text);
+  color: var(--muted);
   font: inherit;
-  font-size: 0.8rem;
+  font-size: 0.78rem;
+  font-weight: 600;
   cursor: pointer;
   text-decoration: none;
   display: inline-flex;
   align-items: center;
+  gap: 0.35rem;
+  transition: color 0.18s var(--ease), border-color 0.18s var(--ease);
 }
 
-.icon-btn.danger {
+.icon-btn:hover {
+  color: var(--accent);
+  border-color: var(--ring);
+}
+
+.icon-btn.danger:hover {
   color: var(--danger);
-  border-color: rgba(239, 68, 68, 0.35);
+  border-color: color-mix(in srgb, var(--danger) 40%, transparent);
+}
+
+.icon-btn .ico {
+  width: 0.95rem;
+  height: 0.95rem;
 }
 
 .badge {
-  font-size: 0.68rem;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  padding: 2px 8px;
+  font-size: 0.62rem;
+  font-weight: 750;
+  letter-spacing: 0.07em;
+  padding: 0.15rem 0.5rem;
   border-radius: 999px;
-  background: rgba(251, 191, 36, 0.15);
+  background: color-mix(in srgb, var(--warn) 15%, transparent);
   color: var(--warn);
+  border: 1px solid color-mix(in srgb, var(--warn) 32%, transparent);
 }
 
-/* --- system ------------------------------------------------------------ */
+/* ---------------------------------------------------------------- system */
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--rad);
+  padding: 1rem 1.05rem;
+  box-shadow: var(--shadow);
+}
+
+.card-title {
+  margin: 0 0 0.85rem;
+  font-size: 0.68rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--dim);
+  font-weight: 700;
+}
 
 .facts {
   display: grid;
-  grid-template-columns: minmax(120px, auto) 1fr;
-  gap: 6px 16px;
-  margin: 0 0 20px;
+  grid-template-columns: minmax(7.5rem, auto) 1fr;
+  gap: 0.4rem 1rem;
+  margin: 0;
+  font-size: 0.85rem;
 }
 
 .facts dt {
-  color: var(--muted);
-  font-size: 0.85rem;
+  color: var(--dim);
 }
 
 .facts dd {
@@ -396,16 +687,16 @@ main {
 
 .storage-bar {
   display: flex;
-  height: 12px;
+  height: 10px;
   border-radius: 999px;
   overflow: hidden;
   background: var(--surface-2);
-  border: 1px solid var(--border);
+  border: 1px solid var(--line);
 }
 
 .storage-bar span {
   display: block;
-  transition: width 0.4s ease;
+  transition: width 0.5s var(--ease);
 }
 
 #bar-normal {
@@ -419,14 +710,16 @@ main {
 .legend {
   display: flex;
   align-items: center;
-  gap: 6px;
-  font-size: 0.8rem;
-  color: var(--muted);
+  gap: 0.4rem;
+  flex-wrap: wrap;
+  font-size: 0.76rem;
+  color: var(--dim);
+  margin: 0.7rem 0 0;
 }
 
 .key {
-  width: 10px;
-  height: 10px;
+  width: 9px;
+  height: 9px;
   border-radius: 3px;
   display: inline-block;
 }
@@ -441,24 +734,89 @@ main {
 
 .key-free {
   background: var(--surface-2);
-  border: 1px solid var(--border);
+  border: 1px solid var(--line-2);
 }
 
-/* --- toast ------------------------------------------------------------- */
+.key:not(:first-child) {
+  margin-left: 0.55rem;
+}
+
+.storage-note {
+  margin: 0.5rem 0 0;
+  font-size: 0.76rem;
+  color: var(--muted);
+}
+
+/* ----------------------------------------------------------- empty state */
+
+.empty {
+  margin: 0;
+  padding: 2.2rem 1rem;
+  display: grid;
+  justify-items: center;
+  gap: 0.3rem;
+  text-align: center;
+  color: var(--muted);
+}
+
+.empty[hidden] {
+  display: none;
+}
+
+.empty span {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.empty small {
+  font-size: 0.8rem;
+  color: var(--dim);
+  max-width: 34ch;
+}
+
+.empty code {
+  font-family: var(--mono);
+  font-size: 0.95em;
+}
+
+.empty-ico {
+  width: 1.9rem;
+  height: 1.9rem;
+  margin-bottom: 0.35rem;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  color: var(--line-2);
+}
+
+/* The preview's empty state sits over a black viewport in both themes. */
+.viewport .empty {
+  color: #94a3b8;
+}
+
+.viewport .empty span {
+  color: #e9eefb;
+}
+
+/* ----------------------------------------------------------------- toast */
 
 .toast {
   position: fixed;
   left: 50%;
-  bottom: calc(20px + env(safe-area-inset-bottom));
+  bottom: calc(1.2rem + env(safe-area-inset-bottom));
   transform: translateX(-50%);
+  max-width: min(92vw, 30rem);
   background: var(--surface-2);
-  border: 1px solid var(--border);
+  border: 1px solid var(--line-2);
   border-radius: 999px;
-  padding: 10px 18px;
+  padding: 0.6rem 1.1rem;
   margin: 0;
-  font-size: 0.88rem;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
-  z-index: 20;
+  font-size: 0.85rem;
+  box-shadow: var(--shadow);
+  z-index: 40;
+  animation: rise 0.24s var(--ease) both;
 }
 
 .toast[hidden] {
@@ -466,8 +824,24 @@ main {
 }
 
 .toast.is-error {
-  border-color: rgba(239, 68, 68, 0.5);
-  color: #fecaca;
+  border-color: color-mix(in srgb, var(--danger) 50%, transparent);
+  color: var(--danger);
+}
+
+/* ----------------------------------------------------------------- misc */
+
+/* Labels are kept down to 320px -- three short words fit comfortably on a
+   375px phone, and an unlabelled icon row is a guessing game. Only the
+   narrowest screens fall back to icons alone. */
+@media (max-width: 20rem) {
+  .seg span {
+    display: none;
+  }
+
+  .seg .ico {
+    width: 1.15rem;
+    height: 1.15rem;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

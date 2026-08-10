@@ -8,6 +8,7 @@ resolved from the running platform instead.
 from __future__ import annotations
 
 import sys
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -16,8 +17,11 @@ import cv2
 __all__ = [
     "DeviceInfo",
     "backend_name",
+    "backend_names",
     "enumerate_devices",
+    "has_backend",
     "preferred_backends",
+    "probe_backends",
     "resolve_backend",
 ]
 
@@ -62,12 +66,35 @@ def preferred_backends() -> list[int]:
     return [_BACKENDS[name] for name in names]
 
 
+def backend_names() -> list[str]:
+    """Every name ``camera.backend`` accepts, whatever this build carries.
+
+    Spelling and availability are different questions: ``v4l2`` in a config
+    edited on a laptop is the right setting for the Pi it is bound for.
+    """
+    return sorted(_BACKENDS)
+
+
+def has_backend(backend: int) -> bool:
+    """Whether this OpenCV build can actually use ``backend``.
+
+    A backend constant always exists; the code behind it only exists if the
+    build was compiled with it. The PyPI wheels ship without GStreamer, so
+    ``cv2.CAP_GSTREAMER`` is a name with nothing behind it there.
+    """
+    return bool(cv2.videoio_registry.hasBackend(backend))
+
+
 def resolve_backend(name: str) -> list[int]:
     """Turn a ``camera.backend`` setting into an ordered list of candidates.
 
     ``auto`` expands to the platform order; anything else pins a single
     backend so a user can force a specific driver when auto-detection picks
     badly.
+
+    Raises:
+        ValueError: if the name is unknown, or names a backend this OpenCV
+            build cannot use.
     """
     key = name.strip().lower()
     if key in {"auto", ""}:
@@ -75,7 +102,24 @@ def resolve_backend(name: str) -> list[int]:
     if key not in _BACKENDS:
         valid = ", ".join(sorted(_BACKENDS))
         raise ValueError(f"unknown capture backend {name!r} (expected auto, {valid})")
-    return [_BACKENDS[key]]
+
+    backend = _BACKENDS[key]
+    # Without this the failure surfaces as "device did not open" against a
+    # perfectly good camera, which sends people looking at cabling. It bites
+    # hardest on `gstreamer`, the backend a CSI camera needs and the one the
+    # pip wheels leave out.
+    if not has_backend(backend):
+        raise ValueError(
+            f"this OpenCV build has no {key} support "
+            f"(cv2 {cv2.__version__} provides: {', '.join(_available_names()) or 'none'}); "
+            'install a build that includes it, or set camera.backend = "auto"'
+        )
+    return [backend]
+
+
+def _available_names() -> list[str]:
+    """Names from ``_BACKENDS`` that this build can actually use."""
+    return sorted(name for name, value in _BACKENDS.items() if name != "any" and has_backend(value))
 
 
 def backend_name(value: int) -> str:
@@ -96,11 +140,21 @@ class DeviceInfo:
     height: int
     fps: float
     backend: str
+    #: ``False`` when the device opened but handed back no frame. That is what
+    #: a camera another program is already holding looks like, and it is worth
+    #: saying out loud rather than leaving off the list as though it were
+    #: unplugged.
+    readable: bool = True
 
     @property
     def label(self) -> str:
+        """Backend-qualified, because an index alone does not name a camera.
+
+        The same integer addresses different hardware on different drivers, so
+        ``[0]`` on its own is an invitation to configure the wrong one.
+        """
         location = self.path or f"index {self.index}"
-        return f"[{self.index}] {self.name} ({location})"
+        return f"{self.backend}[{self.index}] {self.name} ({location})"
 
 
 def _linux_device_name(index: int) -> str:
@@ -115,26 +169,55 @@ def _linux_device_name(index: int) -> str:
         return f"Video device {index}"
 
 
-def enumerate_devices(max_index: int = 10) -> list[DeviceInfo]:
-    """Probe capture indices and report the ones that yield a frame.
+def probe_backends() -> list[int]:
+    """Distinct drivers worth probing on this platform.
+
+    ``any`` is dropped: it is a resolver rather than a driver, and it would
+    re-list whichever of the others answered first.
+    """
+    names = _PLATFORM_ORDER.get(_platform_key(), ("any",))
+    usable = [_BACKENDS[name] for name in names if name != "any" and has_backend(_BACKENDS[name])]
+    return usable or [cv2.CAP_ANY]
+
+
+def enumerate_devices(max_index: int = 10, backends: Sequence[int] | None = None) -> list[DeviceInfo]:
+    """Probe capture indices on every usable driver and report what answered.
 
     Opening a device is the only portable way to know it works: an entry in
     ``/dev`` may be a metadata node with no streaming capability, and the
     ordering of Windows device names does not match OpenCV's indices.
+
+    Every driver is probed rather than stopping at the first that works,
+    because **an index does not name the same camera across backends**. On one
+    Windows laptop MSMF numbers a USB fisheye 0 and the built-in webcam 1,
+    while DirectShow numbers the pair the other way round -- so ``index = 0``
+    selects different hardware depending on which driver ends up answering.
+    Listing both makes that visible rather than surprising.
+
+    A device that opens but hands back no frame is listed with ``readable``
+    false instead of being skipped. Dropping it silently is how "another
+    program is using this camera" gets misread as "this camera is not there".
     """
     on_linux = _platform_key() == "linux"
+    candidates = list(backends) if backends is not None else probe_backends()
     found: list[DeviceInfo] = []
 
-    for index in range(max_index):
-        for backend in preferred_backends():
+    for backend in candidates:
+        for index in range(max_index):
             capture = cv2.VideoCapture(index, backend)
             try:
                 if not capture.isOpened():
                     continue
                 ok, frame = capture.read()
-                if not ok or frame is None:
-                    continue
-                height, width = frame.shape[:2]
+                readable = bool(ok) and frame is not None
+                if readable:
+                    height, width = frame.shape[:2]
+                else:
+                    # No frame to measure, so fall back to what the driver
+                    # claims. It is usually right about the mode even when it
+                    # cannot hand the pixels over.
+                    width = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH))
+                    height = int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
                 found.append(
                     DeviceInfo(
                         index=index,
@@ -144,10 +227,10 @@ def enumerate_devices(max_index: int = 10) -> list[DeviceInfo]:
                         height=height,
                         fps=float(capture.get(cv2.CAP_PROP_FPS)),
                         backend=backend_name(backend),
+                        readable=readable,
                     )
                 )
             finally:
                 capture.release()
-            break
 
     return found

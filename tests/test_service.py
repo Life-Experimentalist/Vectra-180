@@ -433,7 +433,7 @@ def test_the_root_serves_the_ui(service: tuple[StubEngine, Client]) -> None:
     response = client.get("/")
 
     assert response.status == HTTPStatus.OK
-    assert response.getheader("Content-Type") == "text/html"
+    assert response.getheader("Content-Type") == "text/html; charset=utf-8"
     assert b"<html" in response.read().lower()
 
 
@@ -500,6 +500,52 @@ def test_a_client_that_hangs_up_mid_response_is_not_an_error(
     assert caplog.text == ""
 
 
+@pytest.mark.parametrize(
+    "error",
+    [
+        ConnectionResetError("an existing connection was forcibly closed"),
+        BrokenPipeError("the browser went away"),
+        TimeoutError("the socket sat idle"),
+    ],
+)
+def test_a_hang_up_is_recorded_quietly(
+    config: EngineConfig, caplog: pytest.LogCaptureFixture, error: Exception
+) -> None:
+    """A viewer that disappears is ordinary traffic for a dashcam, not a fault."""
+    ensure_directories(config.recording)
+    server = VectraHTTPServer(("127.0.0.1", 0), cast("Engine", StubEngine(config)), config)
+
+    try:
+        with caplog.at_level("DEBUG"):
+            try:
+                raise error
+            except (ConnectionError, TimeoutError):
+                server.handle_error(None, ("127.0.0.1", 51234))
+    finally:
+        server.server_close()
+
+    assert "hung up" in caplog.text
+    assert "Traceback" not in caplog.text
+
+
+def test_a_genuine_fault_keeps_its_traceback(config: EngineConfig, caplog: pytest.LogCaptureFixture) -> None:
+    """Quietening disconnects must not quieten everything else."""
+    ensure_directories(config.recording)
+    server = VectraHTTPServer(("127.0.0.1", 0), cast("Engine", StubEngine(config)), config)
+
+    try:
+        with caplog.at_level("ERROR"):
+            try:
+                raise ValueError("something genuinely broke")
+            except ValueError:
+                server.handle_error(None, ("127.0.0.1", 51234))
+    finally:
+        server.server_close()
+
+    assert "unhandled error while serving" in caplog.text
+    assert "ValueError: something genuinely broke" in caplog.text
+
+
 def test_the_config_endpoint_is_json_serialisable(service: tuple[StubEngine, Client]) -> None:
     _, client = service
 
@@ -555,6 +601,31 @@ def test_a_bundled_asset_is_served(service: tuple[StubEngine, Client]) -> None:
 
     assert response.status == HTTPStatus.OK
     assert response.read() == (STATIC_DIR / "app.css").read_bytes()
+
+
+@pytest.mark.parametrize(
+    ("path", "content_type"),
+    [
+        ("/static/app.css", "text/css; charset=utf-8"),
+        ("/static/app.js", "text/javascript; charset=utf-8"),
+        ("/static/theme.js", "text/javascript; charset=utf-8"),
+    ],
+)
+def test_an_asset_declares_a_type_the_browser_will_execute(
+    service: tuple[StubEngine, Client], path: str, content_type: str
+) -> None:
+    """The panel sends ``nosniff``, so a wrong type here is a blank page.
+
+    The types are pinned in the service rather than read from the host's
+    MIME database, which reports ``text/plain`` for ``.js`` on some machines.
+    """
+    _, client = service
+
+    response = client.get(path)
+
+    assert response.status == HTTPStatus.OK
+    assert response.getheader("Content-Type") == content_type
+    assert response.getheader("X-Content-Type-Options") == "nosniff"
 
 
 @pytest.mark.parametrize(

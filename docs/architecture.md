@@ -28,7 +28,8 @@ is also what makes the suite fast: a fake source can hand over an hour of
 
 ## Threads
 
-Three, plus one per HTTP client.
+Three — main, capture, recorder — plus, when the web service is enabled, an
+accept loop and one short-lived handler thread per in-flight request.
 
 ```mermaid
 flowchart TB
@@ -51,10 +52,12 @@ flowchart TB
         ROLL -->|no| WRITE
     end
 
-    subgraph http["HTTP handler threads — one per client"]
+    subgraph http["Web service — vectra-http, plus a thread per request"]
         direction TB
-        SNAP["preview_frame()"] --> JPEG["cv2.imencode"]
-        DEPTH["compute_depth()"] --> JPEG
+        ACCEPT["serve_forever()"] --> SNAP["preview_frame()"]
+        SNAP --> JPEG["cv2.imencode"]
+        ACCEPT --> DEPTH["compute_depth()"]
+        DEPTH --> JPEG
     end
 
     MAIN["Main thread<br/>signal handling, shutdown"]
@@ -216,8 +219,8 @@ recovered from the panorama.
 | Camera unplugged mid-drive | `read_failure_limit` consecutive failed reads → close, wait `reconnect_delay`, reopen. Retries forever. |
 | Encoder stalls | Queue fills, frames dropped and counted; capture rate is unaffected. |
 | A segment fails to write | The file is discarded, the error is recorded in `stats.last_error`, and a fresh segment opens on the next frame. The session continues. |
-| Card fills up | `prune()` deletes the oldest loop clips until both the size budget and the free-space floor are satisfied. Locked clips are never touched by that pass. |
-| Power cut | Only the segment in flight is lost — that is what fixed-length segments buy. |
+| Card fills up | `prune()` deletes the oldest loop clips until both the size budget and the free-space floor are satisfied. Locked clips are exempt from that pass; they are reclaimed only against their own `max_event_bytes`, oldest first. |
+| Power cut | Fixed-length segments bound the loss to the one in flight, and the fragmented MP4 container bounds it further: on the ffmpeg path the clip plays up to the last completed fragment, two seconds before the cut. Its sidecar is lost. |
 | Sidecar write fails | Logged and ignored. A missing sidecar must never cost you the video. |
 | Clock jumps when NTP settles | Nothing. Durations came from the monotonic clock; only subsequent filenames change. |
 

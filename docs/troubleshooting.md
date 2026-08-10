@@ -41,28 +41,99 @@ groups                   # are you in the 'video' group?
 The camera enumerated, negotiated a mode, and delivered nothing. Almost always
 another process holding it, or a USB bandwidth problem on a shared hub.
 
-Give it a dedicated USB 3 port. On a CM5 IO board, the two USB-A ports share a
-controller with anything on the internal header.
+**Check for a `vectra180 run` you forgot about first.** A recorder left running
+in another terminal holds the camera, and every other command then sees exactly
+this. `vectra180 devices` lists such a device with `opened but streamed nothing`
+rather than hiding it.
+
+```bash
+sudo fuser -v /dev/video0       # Linux: names the process holding it
+```
+
+```powershell
+Get-Process | Where-Object { $_.ProcessName -match 'vectra|python' }
+```
+
+If nothing is holding it, give it a dedicated USB 3 port. On a CM5 IO board, the
+two USB-A ports share a controller with anything on the internal header.
 
 ### `doctor` says the driver gave a different mode
 
 ```
-[warn] camera: 1280x720 via V4L2, 30.0 fps measured; driver gave 1280x720,
-       not the requested 2560x720
+[warn] camera: 1280x720 via v4l2, 30.0 fps measured (30 requested); driver gave
+       1280x720, not the requested 2560x720
 ```
 
 The requested mode is unsupported at that pixel format, so the driver quietly
-negotiated down. List what the device actually offers:
+negotiated down — **provided this is the camera you meant**. A built-in webcam
+answering in place of the fisheye produces the same warning, so if two cameras
+are attached, settle identity first:
+[The wrong camera is recording](#the-wrong-camera-is-recording).
+
+List what the device actually offers:
 
 ```bash
 v4l2-ctl --device /dev/video0 --list-formats-ext
 ```
 
 Then either set `camera.width`/`camera.height` to a mode that appears in that
-list, or fix `camera.fourcc`. **This is nearly always a `fourcc` problem** —
-YUYV cannot sustain 2560×720 at 30 fps over USB 2.0, so a camera asked for YUYV
-at that size will negotiate down to something it can do. `MJPG` is the default
-for exactly this reason.
+list, or fix `camera.fourcc`. The warning itself quotes the numbers the driver
+chose, so the quickest fix is to paste those two lines into the config.
+
+If the mode the driver picked is fine and you simply do not want to pin it, set
+both to `0` and the size is left to the driver:
+
+```toml
+[camera]
+width = 0
+height = 0
+```
+
+**Otherwise this is nearly always a `fourcc` problem** — YUYV cannot sustain
+2560×720 at 30 fps over USB 2.0, so a camera asked for YUYV at that size will
+negotiate down to something it can do. `MJPG` is the default for exactly this
+reason.
+
+### `this OpenCV build has no gstreamer support`
+
+`camera.backend` names a driver the installed OpenCV was not compiled with. The
+PyPI wheels (`opencv-contrib-python`) ship **without** GStreamer, which is the
+backend a MIPI CSI camera needs — see [CSI cameras](#csi-cameras-camdisp-connectors)
+below.
+
+Set `camera.backend = "auto"`, or install an OpenCV built with the backend you
+need. On Raspberry Pi OS the distribution package is built with GStreamer:
+
+```bash
+sudo apt install python3-opencv
+```
+
+Check what a build actually carries:
+
+```bash
+python -c "import cv2; print(cv2.getBuildInformation())" | grep -i gstreamer
+```
+
+### CSI cameras (CAM/DISP connectors)
+
+The capture path is **USB/UVC**. It opens a device with OpenCV's V4L2 backend
+and negotiates a UVC mode, which is what a USB dual-fisheye module presents.
+
+A camera on the CM5's CAM/DISP connectors is MIPI CSI-2 and does not present a
+UVC device. It is driven by `libcamera`, and reaching it from OpenCV means a
+GStreamer pipeline rather than a device index:
+
+```toml
+[camera]
+backend = "gstreamer"
+device = "libcamerasrc ! video/x-raw,width=2560,height=720 ! videoconvert ! appsink"
+width = 0
+height = 0
+```
+
+This requires an OpenCV built with GStreamer (see above); it is not exercised by
+the test suite and has not been verified on hardware. **USB/UVC is the supported
+path.**
 
 ### The service will not start
 
@@ -80,6 +151,107 @@ sudo journalctl -u vectra180 -n 50
 
 Config errors are reported as one line and exit `1`. They are user mistakes, not
 crashes, so there is no traceback to read — the line names the file and the key.
+
+---
+
+## The wrong camera is recording
+
+The symptom is unmistakable on a laptop: the built-in webcam's LED lights up
+while the fisheye sits idle. It is worth understanding because the same
+mechanism can pick the wrong camera on a Pi with two devices attached.
+
+**An index does not name a camera.** `camera.index = 0` means "whatever the
+driver that answers calls device zero", and each driver enumerates in its own
+order. On Windows, MSMF and DirectShow routinely number the same pair of cameras
+in *opposite* order.
+
+`camera.backend = "auto"` tries the platform's drivers in turn. When the first
+one cannot open the camera — most often because another program is holding it —
+it falls through to the next, and that next driver's device `0` can be entirely
+different hardware. Recording then starts on the wrong camera, with no error,
+because from the code's point of view nothing failed.
+
+That fallback is logged, so it is visible rather than silent:
+
+```
+WARNING camera gave 1280x720, not the requested 2560x720
+WARNING msmf could not be used, so camera 0 was opened via dshow instead --
+        an index means a different device on a different backend
+```
+
+### Sorting it out
+
+**1. See everything, per driver.** Every usable backend is probed, so a camera
+appears once per driver that can see it:
+
+```bash
+vectra180 devices
+```
+
+```
+msmf[0] Camera 0 (index 0)  4000x1200 @ 30fps
+msmf[1] Camera 1 (index 1)  640x480 @ 30fps   (opened but streamed nothing -- another program may hold it)
+dshow[0] Camera 0 (index 0)  640x480 @ -1fps
+dshow[1] Camera 1 (index 1)  4000x1200 @ -1fps
+```
+
+The resolution identifies the hardware: **a dual-fisheye module is the wide
+one**. Above, the fisheye is `msmf[0]` *and* `dshow[1]` — the same camera, two
+numbers.
+
+**2. Close whatever is holding it.** An entry marked `opened but streamed
+nothing` is being held by another program — including a `vectra180 run` in
+another terminal. Nothing below will work reliably until it is closed.
+
+**3. Pin the pair.** Both halves matter; a backend without an index is as
+ambiguous as an index without a backend.
+
+```toml
+[camera]
+backend = "msmf"
+index = 0
+```
+
+Or for one run:
+
+```bash
+vectra180 doctor --backend msmf --camera 0
+```
+
+**4. On Linux, prefer a path and skip all of this.** `camera.device` addresses
+the hardware directly, so no enumeration order can misdirect it:
+
+```toml
+[camera]
+device = "/dev/v4l/by-path/platform-xhci-hcd.1-usb-0:1:1.0-video-index0"
+```
+
+```bash
+ls -l /dev/v4l/by-path/    # the USB socket the camera is in
+ls -l /dev/v4l/by-id/      # the make, model and serial it reports
+```
+
+`/dev/videoN` numbering is assigned at enumeration and can move between boots.
+Neither of the stable paths does — but they mean different things, and which one
+you want depends on how many cameras you have:
+
+- **`by-path` names the socket.** "The camera plugged into this port", whatever
+  it is. This is the one to use on a fixed install, where the module is cabled to
+  one connector and stays there.
+- **`by-id` names the device.** Better if you move the camera between ports —
+  but it only distinguishes two modules of the same make if they report distinct
+  serial numbers, and inexpensive UVC modules frequently do not. Two identical
+  cameras that both report no serial produce colliding names, and which one wins
+  is again down to enumeration order. Run the `ls` above and look before relying
+  on it.
+
+### Do not "fix" a mode mismatch before checking identity
+
+`doctor` warns when the driver returns a different size than requested, and
+suggests matching the config to it. **Confirm it is the right camera first.** A
+built-in webcam answering in place of the fisheye looks exactly like a mode
+substitution, and taking the advice pins the mistake into the config
+permanently.
 
 ---
 
@@ -265,7 +437,7 @@ Then either lower one of the budgets, raise `min_free_bytes`, or raise
 | Cause | Check |
 |---|---|
 | Both budgets are already satisfied | `/api/storage` — pruning only runs when it needs to |
-| The clips are in `events/` | Locked clips are exempt by design. Delete them explicitly |
+| The clips are in `events/` | Locked clips are exempt from the loop pass by design; they are reclaimed only once they exceed `max_event_bytes` between them. Delete them explicitly, or lower that budget |
 | The names do not match the pattern | Renamed files are invisible to the pruner *and* to the API |
 | Permissions | `journalctl -u vectra180 \| grep "could not delete"` |
 
@@ -281,7 +453,8 @@ clip in it will not be emptied.
 | Symptom | Cause |
 |---|---|
 | Duration reads `0` in the browser | The `.json` sidecar is missing or unreadable. The video is fine |
-| The last clip of a drive is broken | Power was cut mid-segment. `+faststart` makes most of these still playable |
+| The last clip of a drive has no duration in the browser | Power was cut mid-segment, so the sidecar was never written. On the ffmpeg path the video itself still plays, up to about two seconds before the cut |
+| The last clip of a drive will not open at all | Power was cut mid-segment *and* the OpenCV fallback writer was in use. That path cannot produce a recoverable partial file. Install ffmpeg |
 | Every clip is broken | The OpenCV fallback writer is in use with a codec your player does not know. Install ffmpeg |
 
 Check which encoder is running:
@@ -295,6 +468,12 @@ curl -s .../api/status | jq '.recorder.encoder'
 ```bash
 sudo apt install ffmpeg
 ```
+
+On a workstation used for bench testing, `brew install ffmpeg` on macOS and
+`winget install Gyan.FFmpeg` on Windows do the same job. The Windows installer
+extends `PATH` for future processes only, so open a new terminal before
+re-running `vectra180 doctor` — an existing shell keeps the `PATH` it started
+with and will still report ffmpeg missing.
 
 ### `stats.last_error` is non-empty
 

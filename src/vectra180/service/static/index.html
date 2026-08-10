@@ -3,79 +3,181 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-    <meta name="color-scheme" content="dark" />
+    <meta name="color-scheme" content="dark light" />
     <meta name="robots" content="noindex, nofollow" />
-    <title>Vectra-180 Dashcam</title>
+    <meta name="theme-color" content="#080b14" media="(prefers-color-scheme: dark)" />
+    <meta name="theme-color" content="#f5f7fb" media="(prefers-color-scheme: light)" />
+    <title>Vectra-180</title>
     <link rel="stylesheet" href="/static/app.css" />
     <link
       rel="icon"
       href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230B0F19'/%3E%3Ccircle cx='16' cy='16' r='8' fill='none' stroke='%2300F2FE' stroke-width='2.5'/%3E%3Ccircle cx='16' cy='16' r='2.5' fill='%2300F2FE'/%3E%3C/svg%3E"
     />
+    <!-- Blocking on purpose: it must run before the body paints. -->
+    <script src="/static/theme.js"></script>
   </head>
   <body>
-    <header class="bar">
-      <div class="brand">
+    <!-- One sprite, drawn once, referenced everywhere. No icon font, no
+         network round-trip: the Pi may have no route to the internet. -->
+    <svg class="sprite" aria-hidden="true" focusable="false">
+      <symbol id="i-live" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="3.2" />
+        <path d="M5.6 5.6a9 9 0 0 0 0 12.8M18.4 5.6a9 9 0 0 1 0 12.8" />
+      </symbol>
+      <symbol id="i-clips" viewBox="0 0 24 24">
+        <rect x="3" y="5" width="18" height="14" rx="2.5" />
+        <path d="M3 9.5h18M8 5v4.5M16 5v4.5" />
+      </symbol>
+      <symbol id="i-system" viewBox="0 0 24 24">
+        <rect x="4" y="4" width="16" height="16" rx="3" />
+        <rect x="9" y="9" width="6" height="6" rx="1.2" />
+        <path d="M9 2v2M15 2v2M9 20v2M15 20v2M2 9h2M2 15h2M20 9h2M20 15h2" />
+      </symbol>
+      <symbol id="i-lock" viewBox="0 0 24 24">
+        <rect x="4.5" y="10.5" width="15" height="10" rx="2.5" />
+        <path d="M8 10.5V7.5a4 4 0 0 1 8 0v3" />
+      </symbol>
+      <symbol id="i-pano" viewBox="0 0 24 24">
+        <path d="M3 6.5c6 1.8 12 1.8 18 0v11c-6-1.8-12-1.8-18 0z" />
+      </symbol>
+      <symbol id="i-depth" viewBox="0 0 24 24">
+        <path d="M12 3 3 8l9 5 9-5z" />
+        <path d="m3 12.5 9 5 9-5M3 17l9 5 9-5" />
+      </symbol>
+      <symbol id="i-camera" viewBox="0 0 24 24">
+        <path d="M4 8h3l1.6-2.4h6.8L17 8h3a1.5 1.5 0 0 1 1.5 1.5v8A1.5 1.5 0 0 1 20 19H4a1.5 1.5 0 0 1-1.5-1.5v-8A1.5 1.5 0 0 1 4 8z" />
+        <circle cx="12" cy="13" r="3.4" />
+      </symbol>
+      <symbol id="i-pause" viewBox="0 0 24 24">
+        <rect x="7" y="5" width="3.6" height="14" rx="1.2" />
+        <rect x="13.4" y="5" width="3.6" height="14" rx="1.2" />
+      </symbol>
+      <symbol id="i-play" viewBox="0 0 24 24"><path d="M8 5.2v13.6L19 12z" /></symbol>
+      <symbol id="i-download" viewBox="0 0 24 24">
+        <path d="M12 3.5v11M7.5 10.5 12 15l4.5-4.5M4.5 19.5h15" />
+      </symbol>
+      <symbol id="i-trash" viewBox="0 0 24 24">
+        <path d="M4.5 6.5h15M9.5 6.5V4.8a1.3 1.3 0 0 1 1.3-1.3h2.4a1.3 1.3 0 0 1 1.3 1.3v1.7" />
+        <path d="M6.5 6.5 7.4 19a1.5 1.5 0 0 0 1.5 1.4h6.2a1.5 1.5 0 0 0 1.5-1.4l.9-12.5" />
+      </symbol>
+      <symbol id="i-sun" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="4.2" />
+        <path d="M12 2v2.4M12 19.6V22M2 12h2.4M19.6 12H22M4.9 4.9l1.7 1.7M17.4 17.4l1.7 1.7M19.1 4.9l-1.7 1.7M6.6 17.4l-1.7 1.7" />
+      </symbol>
+      <symbol id="i-moon" viewBox="0 0 24 24">
+        <path d="M20 14.2A8.4 8.4 0 0 1 9.8 4 8.4 8.4 0 1 0 20 14.2z" />
+      </symbol>
+    </svg>
+
+    <header class="topbar">
+      <!-- Not a link. The token lives in the query string, so a href="/"
+           would navigate away from it and answer 401 -- the one tap on the
+           page that could log the operator out. -->
+      <span class="brand">
         <span class="mark" aria-hidden="true"></span>
-        <span>VECTRA<b>-180</b></span>
-      </div>
-      <div class="bar-status">
+        <span class="wordmark">VECTRA<b>180</b></span>
+      </span>
+
+      <div class="topbar-end">
+        <span id="fps" class="fps mono" title="Frames per second arriving from the camera">-- fps</span>
         <span id="rec-pill" class="pill pill-idle">CONNECTING</span>
-        <span id="fps" class="mono">-- fps</span>
+        <button id="btn-theme" class="ghost-btn" type="button" aria-label="Switch to light theme">
+          <svg class="ico" aria-hidden="true"><use href="#i-sun" /></svg>
+        </button>
       </div>
     </header>
 
-    <nav class="tabs" role="tablist">
-      <button class="tab is-active" role="tab" aria-selected="true" aria-controls="panel-live" id="tab-live">
-        Live
+    <nav class="segmented" role="tablist" aria-label="Sections">
+      <button class="seg is-active" role="tab" aria-selected="true" aria-controls="panel-live" id="tab-live">
+        <svg class="ico" aria-hidden="true"><use href="#i-live" /></svg><span>Live</span>
       </button>
-      <button class="tab" role="tab" aria-selected="false" aria-controls="panel-clips" id="tab-clips">Clips</button>
-      <button class="tab" role="tab" aria-selected="false" aria-controls="panel-system" id="tab-system">System</button>
+      <button class="seg" role="tab" aria-selected="false" aria-controls="panel-clips" id="tab-clips">
+        <svg class="ico" aria-hidden="true"><use href="#i-clips" /></svg><span>Clips</span>
+      </button>
+      <button class="seg" role="tab" aria-selected="false" aria-controls="panel-system" id="tab-system">
+        <svg class="ico" aria-hidden="true"><use href="#i-system" /></svg><span>System</span>
+      </button>
     </nav>
 
     <main>
-      <section id="panel-live" class="panel is-active" role="tabpanel" aria-labelledby="tab-live">
-        <div class="viewport">
-          <img id="preview" alt="Live camera preview" />
-          <p id="preview-error" class="empty" hidden>No frames yet. Check the camera connection.</p>
+      <!-- ------------------------------------------------------------ live -->
+      <section id="panel-live" class="panel is-active" role="tabpanel" aria-labelledby="tab-live" tabindex="-1">
+        <div class="stage">
+          <div class="viewport">
+            <img id="preview" alt="Live view from the dual-fisheye camera" />
+            <div class="corners" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+            <p id="preview-error" class="empty" hidden>
+              <svg class="empty-ico" aria-hidden="true"><use href="#i-camera" /></svg>
+              <span>No frames yet</span>
+              <small>Check that the camera is attached, then run <code>vectra180 doctor</code>.</small>
+            </p>
+          </div>
+          <span id="view-tag" class="view-tag mono" aria-hidden="true">RAW</span>
         </div>
 
-        <div class="actions">
-          <button id="btn-lock" class="btn btn-primary">Lock clip</button>
-          <button id="btn-pano" class="btn" aria-pressed="false">Panorama</button>
-          <button id="btn-depth" class="btn">Depth map</button>
-          <button id="btn-snapshot" class="btn">Snapshot</button>
-          <button id="btn-pause" class="btn" aria-pressed="false">Pause preview</button>
+        <div class="toolbar">
+          <button id="btn-lock" class="btn btn-primary" type="button">
+            <svg class="ico" aria-hidden="true"><use href="#i-lock" /></svg><span>Lock clip</span>
+          </button>
+          <button id="btn-pano" class="btn" type="button" aria-pressed="false">
+            <svg class="ico" aria-hidden="true"><use href="#i-pano" /></svg><span>Panorama</span>
+          </button>
+          <button id="btn-depth" class="btn" type="button">
+            <svg class="ico" aria-hidden="true"><use href="#i-depth" /></svg><span>Depth</span>
+          </button>
+          <button id="btn-snapshot" class="btn" type="button">
+            <svg class="ico" aria-hidden="true"><use href="#i-camera" /></svg><span>Snapshot</span>
+          </button>
+          <button id="btn-pause" class="btn" type="button" aria-pressed="false">
+            <svg class="ico" aria-hidden="true"><use href="#i-pause" /></svg><span>Pause</span>
+          </button>
         </div>
 
-        <div class="grid" id="telemetry-grid">
-          <div class="cell"><span class="label">Roll</span><span class="value mono" id="t-roll">--</span></div>
-          <div class="cell"><span class="label">Pitch</span><span class="value mono" id="t-pitch">--</span></div>
-          <div class="cell"><span class="label">Yaw</span><span class="value mono" id="t-yaw">--</span></div>
-          <div class="cell"><span class="label">Peak G</span><span class="value mono" id="t-peak">--</span></div>
+        <div class="metrics" id="telemetry-grid">
+          <div class="metric"><span class="label">Roll</span><span class="value mono" id="t-roll">--</span></div>
+          <div class="metric"><span class="label">Pitch</span><span class="value mono" id="t-pitch">--</span></div>
+          <div class="metric"><span class="label">Yaw</span><span class="value mono" id="t-yaw">--</span></div>
+          <div class="metric"><span class="label">Peak G</span><span class="value mono" id="t-peak">--</span></div>
         </div>
+        <p class="hint" id="telemetry-hint" hidden>
+          This module reports no IMU block, so orientation stays blank. Recording is unaffected.
+        </p>
       </section>
 
-      <section id="panel-clips" class="panel" role="tabpanel" aria-labelledby="tab-clips" hidden>
-        <div class="filters">
-          <button class="chip is-active" data-filter="all">All</button>
-          <button class="chip" data-filter="events">Locked</button>
-          <button class="chip" data-filter="normal">Loop</button>
+      <!-- ----------------------------------------------------------- clips -->
+      <section id="panel-clips" class="panel" role="tabpanel" aria-labelledby="tab-clips" tabindex="-1" hidden>
+        <div class="filters" role="group" aria-label="Filter clips">
+          <button class="chip is-active" type="button" data-filter="all">All</button>
+          <button class="chip" type="button" data-filter="events">Locked</button>
+          <button class="chip" type="button" data-filter="normal">Loop</button>
         </div>
         <ul id="clip-list" class="clips"></ul>
-        <p id="clip-empty" class="empty" hidden>No clips recorded yet.</p>
+        <p id="clip-empty" class="empty" hidden>
+          <svg class="empty-ico" aria-hidden="true"><use href="#i-clips" /></svg>
+          <span>Nothing here yet</span>
+          <small>Clips appear as each segment closes.</small>
+        </p>
       </section>
 
-      <section id="panel-system" class="panel" role="tabpanel" aria-labelledby="tab-system" hidden>
-        <dl class="facts" id="facts"></dl>
-        <div class="storage">
+      <!-- ---------------------------------------------------------- system -->
+      <section id="panel-system" class="panel" role="tabpanel" aria-labelledby="tab-system" tabindex="-1" hidden>
+        <section class="card">
+          <h2 class="card-title">Storage</h2>
           <div class="storage-bar" aria-hidden="true">
             <span id="bar-normal"></span><span id="bar-events"></span>
           </div>
           <p class="legend">
-            <span class="key key-normal"></span>Loop <span class="key key-events"></span>Locked
+            <span class="key key-normal"></span>Loop
+            <span class="key key-events"></span>Locked
             <span class="key key-free"></span>Free
           </p>
-        </div>
+          <p class="storage-note mono" id="storage-note">—</p>
+        </section>
+
+        <section class="card">
+          <h2 class="card-title">Status</h2>
+          <dl class="facts" id="facts"></dl>
+        </section>
       </section>
     </main>
 

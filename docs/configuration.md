@@ -65,18 +65,50 @@ How the dual-fisheye UVC device is opened.
 |---|---|---|---|
 | `index` | `0` | `VECTRA_CAMERA_INDEX` | Must be ≥ 0 |
 | `device` | `""` | `VECTRA_CAMERA_DEVICE` | Explicit path, e.g. `/dev/video0`. Takes precedence over `index` |
-| `width` | `2560` | `VECTRA_CAPTURE_WIDTH` | Both fisheye views side by side. Must be positive |
-| `height` | `720` | `VECTRA_CAPTURE_HEIGHT` | Must be positive |
+| `width` | `2560` | `VECTRA_CAPTURE_WIDTH` | Both fisheye views side by side. ≥ 0; `0` means native mode |
+| `height` | `720` | `VECTRA_CAPTURE_HEIGHT` | ≥ 0; must be `0` if `width` is |
 | `fps` | `30` | `VECTRA_CAPTURE_FPS` | Must be positive |
-| `backend` | `"auto"` | `VECTRA_CAPTURE_BACKEND` | `auto` picks V4L2 on Linux, DirectShow on Windows, AVFoundation on macOS |
+| `backend` | `"auto"` | `VECTRA_CAPTURE_BACKEND` | One of `auto`, `any`, `v4l2`, `dshow`, `msmf`, `avfoundation`, `gstreamer`. An unknown name is a config error; a known name this OpenCV build lacks is rejected at startup |
 | `fourcc` | `"MJPG"` | `VECTRA_CAPTURE_FOURCC` | Exactly four characters |
 | `reconnect_delay` | `2.0` | — | Seconds between reconnect attempts. Must be ≥ 0 |
 | `read_failure_limit` | `30` | — | Consecutive failed reads before the source is declared disconnected. Must be ≥ 1 |
 
 **Prefer `device` over `index` on a Pi.** `/dev/video*` numbering is assigned in
 enumeration order and can move between boots if anything else claims a node
-first; a `/dev/v4l/by-id/...` path never does. `vectra180 devices` lists what
-responded.
+first; a `/dev/v4l/by-path/...` path names the USB socket and never does.
+`vectra180 devices` lists what responded.
+
+**`index` is only meaningful next to a `backend`.** Each driver enumerates
+devices in its own order, so the same integer is different hardware on different
+backends — on Windows, MSMF and DirectShow routinely number the same pair of
+cameras in opposite order. `auto` falls through to the next driver when the
+first cannot open the camera, and with an index that can silently select a
+different device. If more than one camera is attached, pin both keys, or use
+`device` and sidestep the question. `vectra180 devices` prints one line per
+backend for exactly this reason; see
+[The wrong camera is recording](troubleshooting.md#the-wrong-camera-is-recording).
+
+`auto` and `any` are not the same thing. `auto` is Vectra's own ordered list for
+the platform — `v4l2` on Linux, `msmf` then `dshow` on Windows, `avfoundation` on
+macOS — tried in turn. `any` is OpenCV's `CAP_ANY`, which hands the choice to
+OpenCV and gives you whatever it picks. `auto` is the one you want.
+
+**Two identical cameras cannot be told apart by `index`.** If you keep a spare
+of the same model, both report the same USB vendor and product ID, and which one
+gets index `0` is decided by whichever enumerated first this boot. On Linux, put
+a `/dev/v4l/by-path/...` path in `camera.device`: it follows the physical USB
+port, so the setting means "the camera in this socket" regardless of boot order.
+`by-id` only separates them if the units carry distinct serial numbers, which
+inexpensive modules frequently do not — check with `ls -l /dev/v4l/by-id/` before
+relying on it. Windows offers no equivalent stable path, so unplug the spare
+while you configure the one you mean.
+
+**Set `width` and `height` to `0` if you do not know the module's native
+mode.** Dual-fisheye modules ship in a range of sizes — 2560×720 and 4000×1200
+are both common — and asking for the wrong one lands on a downscaled mode
+without saying so. Both must be `0` together; one alone is a config error.
+`vectra180 doctor` reports the size the driver actually opened and, when it
+differs from the request, prints the two lines to paste into the config.
 
 **`fourcc` almost always has to stay `MJPG`.** YUYV cannot sustain 2560×720 at
 30 fps over USB 2.0 — the bandwidth simply is not there — so a UVC camera asked
@@ -134,6 +166,7 @@ The dashcam's primary duty. See [Recording and retention](recording.md).
 | `encoder` | `"auto"` | `VECTRA_ENCODER` | one of `auto`, `ffmpeg`, `opencv` |
 | `preset` | `"ultrafast"` | `VECTRA_ENCODER_PRESET` | — |
 | `bitrate_kbps` | `8000` | `VECTRA_BITRATE_KBPS` | > 0 |
+| `scale` | `1.0` | `VECTRA_RECORDING_SCALE` | 0.1 – 1.0 |
 | `write_telemetry_sidecar` | `true` | — | — |
 | `burn_timestamp` | `true` | `VECTRA_BURN_TIMESTAMP` | — |
 
@@ -165,9 +198,10 @@ after an incident. The published preview snapshot is *not* stamped — burned te
 inside a disparity computation would be matched as scene content.
 
 **`max_bytes` and `max_event_bytes` are separate budgets.** The first governs
-`normal/` and is pruned oldest-first. The second governs `events/`, which
-ordinary pruning never touches. Both are in bytes; `32 * 1024**3` is 34 359 738
-368.
+`normal/` and is pruned oldest-first. The second governs `events/`, which the
+loop pass never touches — locked clips are reclaimed only against each other,
+oldest first, and only once `max_event_bytes` is exceeded. Both are in bytes;
+`32 * 1024**3` is 34 359 738 368.
 
 ## `[incident]`
 
@@ -214,8 +248,14 @@ Stereo depth, computed on request rather than on the recording path.
 roughly with pixel count times disparity range. Frames are downscaled to it
 before matching.
 
-`num_disparities` sets how close an object can be before it falls out of range;
-OpenCV requires a multiple of 16. `focal_scale` is the fisheye focal length as a
+`num_disparities` sets how close an object can be before it falls out of range.
+OpenCV requires a multiple of 16 and an odd `block_size`, and raises rather than
+rounding — so both are coerced before the matcher is built: `num_disparities`
+down to the nearest multiple of 16, `block_size` up to the next odd number. The
+validation column above is therefore the only thing that will reject a value;
+`num_disparities = 100` is accepted and quietly matched at 96.
+
+`focal_scale` is the fisheye focal length as a
 fraction of frame width and is what the dewarp's intrinsic matrix is built from —
 it is the one value worth tuning against your actual lens, by eye, in the desktop
 panel's live sliders.
@@ -265,8 +305,8 @@ VECTRA_CAPTURE_FPS             VECTRA_MAX_EVENT_BYTES       VECTRA_DEPTH_BLOCK_S
 VECTRA_CAPTURE_BACKEND         VECTRA_ENCODER               VECTRA_DEPTH_UNIQUENESS
 VECTRA_CAPTURE_FOURCC          VECTRA_ENCODER_PRESET        VECTRA_FOCAL_SCALE
 VECTRA_TELEMETRY_ENABLED       VECTRA_BITRATE_KBPS          VECTRA_SERVER_ENABLED
-VECTRA_METADATA_WIDTH          VECTRA_BURN_TIMESTAMP        VECTRA_SERVER_HOST
-VECTRA_GYRO_SMOOTHING                                       VECTRA_SERVER_PORT
+VECTRA_METADATA_WIDTH          VECTRA_RECORDING_SCALE       VECTRA_SERVER_HOST
+VECTRA_GYRO_SMOOTHING          VECTRA_BURN_TIMESTAMP        VECTRA_SERVER_PORT
 VECTRA_COMPLEMENTARY_ALPHA                                  VECTRA_SERVER_TOKEN
 VECTRA_YAW_LEAK_SECONDS                                     VECTRA_PREVIEW_QUALITY
 VECTRA_GRAVITY_TOLERANCE_G                                  VECTRA_PREVIEW_FPS
@@ -290,6 +330,7 @@ Applied last, on top of everything above. Available on every subcommand:
 | `--config PATH` | which TOML file is read |
 | `--camera N` | `camera.index` |
 | `--device PATH` | `camera.device` |
+| `--backend NAME` | `camera.backend` |
 | `--recording-dir PATH` | `recording.directory` |
 
 And on `run` specifically: `--host`, `--port`, `--token`, `--no-record`,
@@ -301,7 +342,7 @@ And on `run` specifically: `--host`, `--port`, `--token`, `--no-record`,
 
 ```toml
 [camera]
-device = "/dev/v4l/by-id/usb-Dual_Fisheye_Camera-video-index0"
+device = "/dev/v4l/by-path/platform-xhci-hcd.1-usb-0:1:1.0-video-index0"
 width = 2560
 height = 720
 fps = 30

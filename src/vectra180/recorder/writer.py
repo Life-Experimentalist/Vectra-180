@@ -102,10 +102,18 @@ class FFmpegWriter:
             # corrupt write can destroy, and lets players seek.
             "-g",
             str(max(1, int(fps * 2))),
-            # Writes the index up front so a segment truncated by a power cut
-            # is still playable rather than an unseekable stub.
+            # Fragmented MP4, not a plain one. ``empty_moov`` writes the header
+            # before the first frame and ``frag_keyframe`` closes a fragment at
+            # every keyframe, so a file the power cut off mid-write is still a
+            # valid MP4 up to the last completed fragment -- with -g above,
+            # within two seconds of the cut. A plain MP4 would have no ``moov``
+            # atom at all, because ``+faststart`` only runs once muxing is over
+            # and a killed process never gets there: the whole segment is lost,
+            # which for a dashcam is the segment containing the collision.
+            # ``default_base_moof`` is what makes the result seekable in
+            # players that predate the fragmented profile.
             "-movflags",
-            "+faststart",
+            "+frag_keyframe+empty_moov+default_base_moof",
             str(path),
         ]
         try:

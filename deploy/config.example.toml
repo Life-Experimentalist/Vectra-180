@@ -18,15 +18,25 @@
 # ---------------------------------------------------------------------------
 
 # Device index, used when `device` is empty. The first camera is 0.
+#
+# An index is only meaningful next to a backend: each driver numbers devices in
+# its own order, so 0 is different hardware on different backends. If more than
+# one camera is attached, set `backend` below as well, or use `device`.
+# `vectra180 devices` prints one line per backend so you can see the difference.
 index = 0
 
-# An explicit device path, which overrides `index` when set. Prefer a
-# by-id path on a Pi: /dev/video0 is assigned in enumeration order and moves
-# when a second UVC device is plugged in, while the by-id link does not.
+# An explicit device path, which overrides `index` when set. Prefer a stable
+# path on a Pi: /dev/video0 is assigned in enumeration order and moves when a
+# second UVC device is plugged in.
 #
-#   ls -l /dev/v4l/by-id/
+#   ls -l /dev/v4l/by-path/   # names the USB socket -- best for a fixed install
+#   ls -l /dev/v4l/by-id/     # names make, model and serial
 #
-# device = "/dev/v4l/by-id/usb-YourVendor_Dual_Fisheye-video-index0"
+# by-path is the safer default: it means "the camera in this connector"
+# regardless of boot order. by-id only distinguishes two modules of the same
+# make if they report distinct serial numbers, and cheap ones often do not.
+#
+# device = "/dev/v4l/by-path/platform-xhci-hcd.1-usb-0:1:1.0-video-index0"
 device = ""
 
 # Capture geometry. This is the *side-by-side* frame the module emits, so the
@@ -35,8 +45,13 @@ width = 2560
 height = 720
 fps = 30
 
-# Capture backend. "auto" picks V4L2 on Linux and DirectShow on Windows.
-# Override only to diagnose: "v4l2", "dshow", "msmf", "any".
+# Capture backend: "auto", "v4l2", "dshow", "msmf", "avfoundation", "gstreamer",
+# "any". "auto" tries the platform's drivers in order -- V4L2 on Linux, MSMF then
+# DirectShow on Windows, AVFoundation on macOS.
+#
+# Pin one when more than one camera is attached. "auto" falls through to the next
+# driver if the first cannot open the camera, and because indices are per-backend
+# that can start recording a different device without any error.
 backend = "auto"
 
 # Pixel format requested from the camera. MJPG is what makes 2560x720 at 30 fps
@@ -55,7 +70,7 @@ read_failure_limit = 30
 # ---------------------------------------------------------------------------
 
 # Decode the ICM42688 IMU block the module embeds in the leftmost pixel
-# columns. Turning this off costs the horizon overlay and the g-sensor;
+# column. Turning this off costs the horizon overlay and the g-sensor;
 # recording is unaffected. Modules without an IMU are detected automatically,
 # so there is no need to set this for them.
 enabled = true
@@ -95,8 +110,9 @@ enabled = true
 # dedicated card is the usual arrangement.
 directory = "/var/lib/vectra180/recordings"
 
-# Length of each clip, in seconds. A power cut costs at most one segment, so
-# shorter loses less; longer means fewer files and marginally less overhead.
+# Length of each clip, in seconds. A power cut costs at most one segment, and
+# on the ffmpeg path usually much less than that -- see `container` below.
+# Shorter loses less; longer means fewer files and marginally less overhead.
 segment_seconds = 60
 
 # Total budget for ordinary footage, in bytes. Once past it the oldest clips
@@ -111,8 +127,11 @@ min_free_bytes = 2147483648
 # these; they are only reclaimed once they exceed this on their own. 8 GiB.
 max_event_bytes = 8589934592
 
-# Container. "mp4" plays everywhere; "mkv" survives an interrupted write
-# better, at the cost of some players not opening it.
+# Container. "mp4" is written fragmented, so a clip cut off by a power failure
+# still plays up to about two seconds before the cut -- there is no longer a
+# resilience reason to prefer "mkv", which some players will not open. This
+# applies to the ffmpeg encoder only; the OpenCV fallback cannot produce a
+# recoverable partial file in any container.
 container = "mp4"
 
 # "auto" uses ffmpeg when it is on PATH and falls back to OpenCV's writer.
@@ -128,6 +147,17 @@ preset = "ultrafast"
 # Target bitrate in kbit/s. 8000 is a reasonable 2560x720 dashcam figure;
 # raise it if number plates are not legible on playback.
 bitrate_kbps = 8000
+
+# Shrink each frame by this factor before encoding. 1.0 records what the camera
+# produced. Some dual-fisheye modules offer exactly one mode -- 4000x1200 is
+# common, and it is 2.6x the pixels the CM5 was measured against -- and no
+# resolution request will move them off it. 0.5 is a quarter of the encoder's
+# work and the difference between recording and dropping frames. Preview, depth
+# and the HUD are unaffected: they keep working from the full frame.
+#
+# Run `vectra180 doctor` after changing it; the encoder benchmark follows this
+# setting and will tell you whether the headroom is now real.
+scale = 1.0
 
 # Write a JSON sidecar of IMU samples beside each clip. This is where the
 # telemetry survives -- the video pixels do not carry it once the metadata
@@ -176,11 +206,13 @@ lock_previous_segment = true
 # in this, so it is the first thing to lower on a busy Pi.
 working_width = 640
 
-# Disparity search range, in pixels. Must be a multiple of 16. Larger sees
-# closer objects and costs proportionally more.
+# Disparity search range, in pixels. Larger sees closer objects and costs
+# proportionally more. SGBM requires a multiple of 16, so anything else is
+# rounded down to one rather than rejected.
 num_disparities = 80
 
-# SGBM matching window. Odd, 3 or greater. Larger is smoother and blunter.
+# SGBM matching window. Larger is smoother and blunter. SGBM requires an odd
+# value of 3 or more, so an even one is rounded up rather than rejected.
 block_size = 7
 
 # Margin by which the best match must beat the runner-up, as a percentage.

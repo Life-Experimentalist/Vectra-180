@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 
 from vectra180.imaging import FisheyeDewarper, HorizonStabilizer, PanoramaStitcher
-from vectra180.imaging.layout import crop_to_even, split_stereo, strip_metadata
+from vectra180.imaging.layout import crop_to_even, downscale, split_stereo, strip_metadata
 
 from .conftest import FRAME_HEIGHT, FRAME_WIDTH, METADATA_WIDTH
 
@@ -31,6 +31,34 @@ def test_crop_to_even_trims_at_most_one_line(shape: tuple[int, int], expected: t
 
 def test_crop_to_even_preserves_channels() -> None:
     assert crop_to_even(np.zeros((65, 321, 3), dtype=np.uint8)).shape == (64, 320, 3)
+
+
+def test_downscale_at_full_size_returns_the_same_array() -> None:
+    """Recording is the duty, so the default path copies nothing."""
+    image = np.zeros((64, 320, 3), dtype=np.uint8)
+
+    assert downscale(image, 1.0) is image
+
+
+@pytest.mark.parametrize(
+    ("factor", "expected"),
+    [(0.5, (32, 160, 3)), (0.25, (16, 80, 3)), (0.75, (48, 240, 3))],
+)
+def test_downscale_shrinks_both_axes(factor: float, expected: tuple[int, int, int]) -> None:
+    assert downscale(np.zeros((64, 320, 3), dtype=np.uint8), factor).shape == expected
+
+
+def test_downscale_never_produces_a_degenerate_frame() -> None:
+    """An encoder handed a zero-width frame fails the whole recording."""
+    assert downscale(np.zeros((4, 4, 3), dtype=np.uint8), 0.1).shape == (2, 2, 3)
+
+
+def test_downscale_averages_rather_than_samples() -> None:
+    """A dropped pixel loses a lane marking; an averaged one keeps a trace."""
+    image = np.zeros((4, 4, 3), dtype=np.uint8)
+    image[0, 0] = 200
+
+    assert downscale(image, 0.5)[0, 0, 0] == 50
 
 
 def test_strip_metadata_splits_at_the_boundary(raw_frame: np.ndarray) -> None:

@@ -17,7 +17,9 @@ busy the machine running the suite happens to be.
 
 from __future__ import annotations
 
+import itertools
 import json
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, NoReturn
 
@@ -99,12 +101,13 @@ class BenchWriter:
         self.size = size
         self.written = 0
         self.closed = 0
+        self.frames: list[np.ndarray] = []
         self._fail_at = fail_at
 
     def write(self, frame: np.ndarray) -> None:
-        del frame
         if self._fail_at is not None and self.written >= self._fail_at:
             raise RecorderError("ffmpeg stopped accepting frames")
+        self.frames.append(frame)
         self.written += 1
 
     def close(self) -> None:
@@ -269,8 +272,47 @@ def test_attached_devices_are_listed(report: Report, monkeypatch: pytest.MonkeyP
 
     check = named(report, "devices")
     assert check.status == OK
-    assert "[0] USB 3.0 Camera" in check.detail
-    assert "[2] Webcam" in check.detail
+    assert "msmf[0] USB 3.0 Camera" in check.detail
+    assert "msmf[2] Webcam" in check.detail
+
+
+def test_the_listing_carries_each_devices_mode(report: Report, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Windows has no device names to go by, so the frame size is the only way
+    to tell a dual-fisheye module from a built-in webcam."""
+    monkeypatch.setattr(doctor_module, "enumerate_devices", lambda: [device()])
+
+    _check_devices(report)
+
+    assert "2560x720" in named(report, "devices").detail
+
+
+def test_a_device_held_by_another_program_is_called_out(report: Report, monkeypatch: pytest.MonkeyPatch) -> None:
+    """One camera streaming and one not is the normal shape of this: the
+    fisheye is busy and the webcam beside it is idle and happy to answer."""
+    monkeypatch.setattr(
+        doctor_module,
+        "enumerate_devices",
+        lambda: [replace(device(), readable=False), device(1, "Webcam")],
+    )
+
+    _check_devices(report)
+
+    check = named(report, "devices")
+    assert check.status == WARN
+    assert "no frames" in check.detail
+    assert "another program" in check.remedy
+
+
+def test_nothing_streaming_at_all_fails(report: Report, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Devices that all open and none stream is not a wiring fault, and the
+    remedy has to say so or the next hour goes on cables."""
+    monkeypatch.setattr(doctor_module, "enumerate_devices", lambda: [replace(device(), readable=False)])
+
+    _check_devices(report)
+
+    check = named(report, "devices")
+    assert check.status == FAIL
+    assert "vectra180 run" in check.remedy
 
 
 # --------------------------------------------------------------------------
@@ -357,7 +399,27 @@ def test_a_driver_ignoring_the_requested_mode_warns(
     check = named(report, "camera")
     assert check.status == WARN
     assert "not the requested 2560x720" in check.detail
-    assert "v4l2-ctl" in check.remedy
+    # The remedy quotes the numbers the driver actually gave, so it can be
+    # pasted into the config without a second trip to the terminal.
+    assert "camera.width = 320" in check.remedy
+    assert "camera.height = 64" in check.remedy
+    assert "set both to 0" in check.remedy
+
+
+def test_native_mode_never_reports_a_mismatch(
+    report: Report, config: EngineConfig, monkeypatch: pytest.MonkeyPatch, clock: Any
+) -> None:
+    """With the size left to the driver there is no requested mode to miss."""
+    clock(1.0)
+    config.camera.width = 0
+    config.camera.height = 0
+    monkeypatch.setattr(doctor_module, "CameraSource", lambda _config: FakeCameraSource())
+
+    _check_camera(report, config)
+
+    check = named(report, "camera")
+    assert check.status == OK
+    assert "not the requested" not in check.detail
 
 
 def test_the_camera_is_released_afterwards(
@@ -375,16 +437,17 @@ def test_the_camera_is_released_afterwards(
 def test_the_camera_check_keeps_a_run_of_frames(
     report: Report, config: EngineConfig, monkeypatch: pytest.MonkeyPatch, clock: Any
 ) -> None:
-    """More than one, because a single strip can never confirm telemetry."""
+    """More than one: a single strip can never confirm telemetry, and a single
+    frame written repeatedly cannot measure an encoder."""
     clock(1.0)
     source = FakeCameraSource()
     monkeypatch.setattr(doctor_module, "CameraSource", lambda _config: source)
 
     images = _check_camera(report, config)
 
-    assert len(images) == 2
+    assert len(images) == doctor_module._KEPT_FRAMES
     assert source.read_count == SAMPLES
-    # The last two read, not the first two: their strips carry later timestamps.
+    # The last frames read, not the first: their strips carry later timestamps.
     assert not np.array_equal(images[0], images[1])
 
 
@@ -476,6 +539,22 @@ def test_ffmpeg_missing_warns_without_blocking_recording(report: Report, monkeyp
     check = named(report, "ffmpeg")
     assert check.status == WARN
     assert "OpenCV writer" in check.detail
+
+
+@pytest.mark.parametrize(
+    ("plat", "expected"),
+    [("win32", "winget"), ("darwin", "brew"), ("linux", "apt")],
+)
+def test_the_ffmpeg_hint_names_this_platform_s_installer(
+    report: Report, monkeypatch: pytest.MonkeyPatch, plat: str, expected: str
+) -> None:
+    """Naming a package manager the reader does not have is worse than naming none."""
+    monkeypatch.setattr(doctor_module, "ffmpeg_path", lambda: None)
+    monkeypatch.setattr(doctor_module.sys, "platform", plat)
+
+    _check_ffmpeg(report)
+
+    assert expected in named(report, "ffmpeg").remedy
 
 
 # --------------------------------------------------------------------------
@@ -629,41 +708,88 @@ def test_an_encoder_with_no_margin_warns(
 
 
 def test_an_encoder_that_cannot_keep_up_fails(
-    report: Report, config: EngineConfig, writers: list[BenchWriter], clock: Any
+    report: Report, config: EngineConfig, writers: list[BenchWriter], clock: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # Thirty frames in two seconds: half the rate the camera produces.
     clock(2.0)
     del writers
+    monkeypatch.setattr(doctor_module, "ffmpeg_path", lambda: "/usr/bin/ffmpeg")
 
     _check_encoder(report, config, [make_frame()])
 
     check = named(report, "encoder")
     assert check.status == FAIL
     assert "frames will be dropped" in check.remedy
+    assert "Install ffmpeg" not in check.remedy
+
+
+def test_a_slow_encoder_without_ffmpeg_is_told_to_install_it(
+    report: Report, config: EngineConfig, writers: list[BenchWriter], clock: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The OpenCV writer has no bitrate control, so it is usually the reason."""
+    clock(2.0)
+    del writers
+    monkeypatch.setattr(doctor_module, "ffmpeg_path", lambda: None)
+
+    _check_encoder(report, config, [make_frame()])
+
+    assert "Install ffmpeg" in named(report, "encoder").remedy
 
 
 def test_the_benchmark_uses_the_size_the_recorder_would_write(
     report: Report, config: EngineConfig, writers: list[BenchWriter], clock: Any
 ) -> None:
-    """H.264's yuv420p refuses odd dimensions, so the recorder crops first."""
+    """The strip goes first, then the odd column: yuv420p refuses odd sizes."""
     clock(0.5)
+    config.telemetry.metadata_width = 8
     odd = np.zeros((65, 321, 3), dtype=np.uint8)
 
     _check_encoder(report, config, [odd])
 
-    assert writers[0].size == (320, 64)
+    assert writers[0].size == (312, 64)
 
 
-def test_the_newest_frame_is_the_one_benchmarked(
+def test_the_newest_frame_sets_the_benchmark_size(
     report: Report, config: EngineConfig, writers: list[BenchWriter], clock: Any
 ) -> None:
     clock(0.5)
+    config.telemetry.enabled = False
     older = np.zeros((64, 320, 3), dtype=np.uint8)
     newer = np.zeros((48, 240, 3), dtype=np.uint8)
 
     _check_encoder(report, config, [older, newer])
 
     assert writers[0].size == (240, 48)
+
+
+def test_the_benchmark_follows_the_recording_scale(
+    report: Report, config: EngineConfig, writers: list[BenchWriter], clock: Any
+) -> None:
+    """A quarter of the pixels is a different measurement, not a faster one."""
+    clock(0.5)
+    config.telemetry.enabled = False
+    config.recording.scale = 0.5
+
+    _check_encoder(report, config, [np.zeros((64, 320, 3), dtype=np.uint8)])
+
+    assert writers[0].size == (160, 32)
+
+
+def test_the_benchmark_cycles_distinct_frames(
+    report: Report, config: EngineConfig, writers: list[BenchWriter], clock: Any
+) -> None:
+    """The same frame written thirty times costs an encoder almost nothing --
+    every one after the first is an empty residual -- so the benchmark would
+    report a rate the camera will never see."""
+    clock(0.5)
+    config.telemetry.enabled = False
+    frames = [np.full((64, 320, 3), fill, dtype=np.uint8) for fill in (10, 120, 230)]
+
+    _check_encoder(report, config, frames)
+
+    written = writers[0].frames
+    assert len(written) == 30
+    assert all(not np.array_equal(a, b) for a, b in itertools.pairwise(written))
 
 
 # --------------------------------------------------------------------------

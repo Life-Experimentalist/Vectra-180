@@ -144,6 +144,10 @@ class CameraConfig:
     index: int = 0
     #: Explicit device path (``/dev/video2``). Takes precedence over ``index``.
     device: str = ""
+    #: Requested frame size. Set both to ``0`` to accept whatever mode the
+    #: driver opens in -- dual-fisheye modules ship in a range of native
+    #: resolutions (2560x720 and 4000x1200 are both common) and asking for the
+    #: wrong one lands on a silently downscaled mode.
     width: int = 2560
     height: int = 720
     fps: int = 30
@@ -169,12 +173,27 @@ class CameraConfig:
     def validate(self) -> None:
         if self.index < 0:
             raise ValueError("camera.index must be >= 0")
-        if self.width <= 0 or self.height <= 0:
-            raise ValueError("camera.width and camera.height must be positive")
+        if self.width < 0 or self.height < 0:
+            raise ValueError("camera.width and camera.height must be >= 0")
+        if (self.width == 0) != (self.height == 0):
+            raise ValueError("camera.width and camera.height must both be 0 (native mode) or both positive")
         if self.fps <= 0:
             raise ValueError("camera.fps must be positive")
         if len(self.fourcc) != 4:
             raise ValueError("camera.fourcc must be exactly four characters (e.g. MJPG)")
+        # Imported here rather than at module scope: vectra180.capture imports
+        # this module, so a top-level import would close the loop.
+        #
+        # Only the spelling is checked, not whether this build carries the
+        # driver. "v4l2" in a config edited on a laptop is a correct setting
+        # for the Pi it is bound for, and refusing to print it here would help
+        # nobody. Whether the backend really exists is settled at open time,
+        # where the answer is about the running machine.
+        from vectra180.capture.backends import backend_names
+
+        names = backend_names()
+        if self.backend.strip().lower() not in {"auto", "", *names}:
+            raise ValueError(f"unknown capture backend {self.backend!r} (expected auto, {', '.join(names)})")
         if self.reconnect_delay < 0:
             raise ValueError("camera.reconnect_delay must be >= 0")
         if self.read_failure_limit < 1:
@@ -253,6 +272,12 @@ class RecordingConfig:
     #: ``ultrafast`` or ``superfast`` are the only realistic choices at 2560x720.
     preset: str = "ultrafast"
     bitrate_kbps: int = 8000
+    #: Shrink each frame by this factor before encoding. ``1.0`` records what
+    #: the camera produced. Lower it when a module offers only one mode and
+    #: that mode is more than the encoder can carry -- ``0.5`` is a quarter of
+    #: the pixels, and the recording keeps running instead of dropping frames.
+    #: Preview, depth and the HUD are unaffected; they see the full frame.
+    scale: float = 1.0
     #: Write a JSON sidecar of IMU samples alongside each segment.
     write_telemetry_sidecar: bool = True
     #: Burn the wall-clock time into the recorded pixels. Container metadata
@@ -273,6 +298,7 @@ class RecordingConfig:
         self.encoder = _env_str("VECTRA_ENCODER", self.encoder)
         self.preset = _env_str("VECTRA_ENCODER_PRESET", self.preset)
         self.bitrate_kbps = _env_int("VECTRA_BITRATE_KBPS", self.bitrate_kbps)
+        self.scale = _env_float("VECTRA_RECORDING_SCALE", self.scale)
 
     def validate(self) -> None:
         if self.segment_seconds < 5:
@@ -287,6 +313,10 @@ class RecordingConfig:
             raise ValueError("recording.bitrate_kbps must be positive")
         if self.encoder not in {"auto", "ffmpeg", "opencv"}:
             raise ValueError("recording.encoder must be one of: auto, ffmpeg, opencv")
+        # Upscaling costs encoder time to invent detail the sensor never saw,
+        # which is the opposite of what this setting is for.
+        if not 0.1 <= self.scale <= 1.0:
+            raise ValueError("recording.scale must be between 0.1 and 1.0")
 
     @property
     def normal_dir(self) -> Path:

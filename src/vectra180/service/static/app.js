@@ -37,6 +37,16 @@ async function api(path, options = {}) {
 
 const $ = (id) => document.getElementById(id);
 
+/** Swap the glyph inside a sprite-backed button without disturbing its label. */
+function setIcon(button, symbol) {
+  button.querySelector("use").setAttribute("href", symbol);
+}
+
+/** Replace a button's visible label, leaving its icon in place. */
+function setLabel(button, text) {
+  button.querySelector("span").textContent = text;
+}
+
 let toastTimer = 0;
 function toast(message, isError = false) {
   const node = $("toast");
@@ -48,6 +58,40 @@ function toast(message, isError = false) {
     node.hidden = true;
   }, 3200);
 }
+
+/* --- theme -------------------------------------------------------------- */
+
+/* The stored choice is applied by an inline script in the head, before first
+ * paint. This only has to keep the button in step and record a new choice.
+ * The theme is a display preference, not a credential, so localStorage is
+ * the right place for it. */
+
+/** The theme in force, whether it was chosen or inherited from the OS. */
+function currentTheme() {
+  return (
+    document.documentElement.dataset.theme ||
+    (matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark")
+  );
+}
+
+/** Point the button at the theme it would switch to. */
+function syncThemeButton() {
+  const button = $("btn-theme");
+  const dark = currentTheme() === "dark";
+  setIcon(button, dark ? "#i-sun" : "#i-moon");
+  button.setAttribute("aria-label", dark ? "Switch to light theme" : "Switch to dark theme");
+}
+
+$("btn-theme").addEventListener("click", () => {
+  const next = currentTheme() === "dark" ? "light" : "dark";
+  document.documentElement.dataset.theme = next;
+  try {
+    localStorage.setItem("vectra-theme", next);
+  } catch {
+    /* private mode: the toggle still works for this session */
+  }
+  syncThemeButton();
+});
 
 /* --- tabs --------------------------------------------------------------- */
 
@@ -81,6 +125,12 @@ let previewPaused = false;
 // viewing choice made per request, so it lives here and not in the config.
 let panorama = false;
 
+/** Name the picture on screen, so a still depth map is never mistaken for a
+ *  frozen camera. */
+function setViewTag(text) {
+  $("view-tag").textContent = text;
+}
+
 function startPreview() {
   // A cache-busting parameter forces the browser to reopen the multipart
   // stream after a pause; without it Safari replays the closed response.
@@ -88,13 +138,17 @@ function startPreview() {
   if (panorama) params.set("view", "pano");
   preview.src = url("/stream.mjpg") + (TOKEN ? "&" : "?") + params;
   $("preview-error").hidden = true;
+  setViewTag(panorama ? "PANORAMA" : "RAW");
 }
 
 function setPaused(paused) {
   previewPaused = paused;
   const button = $("btn-pause");
   button.setAttribute("aria-pressed", String(paused));
-  button.textContent = paused ? "Resume preview" : "Pause preview";
+  // The label lives in a span beside the icon: assigning textContent to the
+  // button itself would take the icon with it.
+  setIcon(button, paused ? "#i-play" : "#i-pause");
+  setLabel(button, paused ? "Resume" : "Pause");
 }
 
 function stopPreview() {
@@ -140,6 +194,7 @@ $("btn-lock").addEventListener("click", async () => {
 $("btn-depth").addEventListener("click", () => {
   setPaused(true);
   preview.src = url("/depth.jpg") + (TOKEN ? "&" : "?") + "t=" + Date.now();
+  setViewTag("DEPTH");
   toast("Depth map computed from the current frame");
 });
 
@@ -173,11 +228,17 @@ function renderStatus(status) {
 
   $("fps").textContent = (status.fps || 0).toFixed(1) + " fps";
 
-  const orientation = (status.telemetry && status.telemetry.orientation) || {};
+  const telemetry = status.telemetry || {};
+  const orientation = telemetry.orientation || {};
   $("t-roll").textContent = orientation.roll === undefined ? "--" : orientation.roll.toFixed(1) + "°";
   $("t-pitch").textContent = orientation.pitch === undefined ? "--" : orientation.pitch.toFixed(1) + "°";
   $("t-yaw").textContent = orientation.yaw === undefined ? "--" : orientation.yaw.toFixed(1) + "°";
   $("t-peak").textContent = status.incidents ? status.incidents.peak_g.toFixed(2) + " g" : "--";
+
+  // Four dashes with no explanation reads as a fault. Most dual-fisheye
+  // modules carry no IMU at all, and that is a fact about the hardware
+  // rather than something the operator can fix.
+  $("telemetry-hint").hidden = telemetry.present !== false;
 
   renderFacts(status);
   renderStorage(status.storage);
@@ -220,6 +281,13 @@ function renderStorage(storage) {
   $("bar-events").style.width = ((storage.event_bytes / total) * 100).toFixed(2) + "%";
   $("bar-normal").title = `Loop footage: ${formatBytes(storage.normal_bytes)}`;
   $("bar-events").title = `Locked footage: ${formatBytes(storage.event_bytes)}`;
+
+  // The bar shows the split; the numbers underneath say how much room is
+  // left, which is the question anyone opening this panel is actually asking.
+  const used = storage.normal_bytes + storage.event_bytes;
+  $("storage-note").textContent =
+    `${formatBytes(used)} used of ${formatBytes(total)} · ` +
+    `${formatBytes(storage.normal_bytes)} loop · ${formatBytes(storage.event_bytes)} locked`;
 }
 
 async function refreshStatus() {
@@ -245,6 +313,17 @@ for (const chip of document.querySelectorAll(".chip")) {
     }
     refreshClips();
   });
+}
+
+/** A sprite icon, built the same way the static markup builds one. */
+function icon(symbol) {
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("class", "ico");
+  svg.setAttribute("aria-hidden", "true");
+  const use = document.createElementNS("http://www.w3.org/2000/svg", "use");
+  use.setAttribute("href", symbol);
+  svg.append(use);
+  return svg;
 }
 
 function clipRow(clip) {
@@ -279,13 +358,17 @@ function clipRow(clip) {
   const download = document.createElement("a");
   download.className = "icon-btn";
   download.href = url("/api/clips/" + encodeURIComponent(clip.name));
-  download.textContent = "Download";
+  download.title = "Download";
+  download.setAttribute("aria-label", "Download " + clip.name);
+  download.append(icon("#i-download"));
   actions.append(download);
 
   if (!clip.protected) {
     const lock = document.createElement("button");
     lock.className = "icon-btn";
-    lock.textContent = "Lock";
+    lock.title = "Lock";
+    lock.setAttribute("aria-label", "Lock " + clip.name);
+    lock.append(icon("#i-lock"));
     lock.addEventListener("click", async () => {
       try {
         await api("/api/clips/" + encodeURIComponent(clip.name) + "/protect", { method: "POST" });
@@ -300,7 +383,9 @@ function clipRow(clip) {
 
   const remove = document.createElement("button");
   remove.className = "icon-btn danger";
-  remove.textContent = "Delete";
+  remove.title = "Delete";
+  remove.setAttribute("aria-label", "Delete " + clip.name);
+  remove.append(icon("#i-trash"));
   remove.addEventListener("click", async () => {
     if (!confirm(`Delete ${clip.name}? This cannot be undone.`)) return;
     try {
@@ -332,6 +417,7 @@ async function refreshClips() {
 
 /* --- boot --------------------------------------------------------------- */
 
+syncThemeButton();
 startPreview();
 refreshStatus();
 refreshClips();

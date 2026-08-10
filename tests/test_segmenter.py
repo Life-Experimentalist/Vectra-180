@@ -342,6 +342,71 @@ def test_the_sidecar_duration_comes_from_the_frame_count(
     assert sidecar_of(writers[0])["duration_seconds"] == 0.5
 
 
+def test_the_sidecar_separates_playback_length_from_road_time(
+    recorder: SegmentRecorder, writers: list[FakeWriter], frame: np.ndarray
+) -> None:
+    """Five frames spanning four seconds play for half a second at 10fps.
+
+    A reviewer reading an incident clip has to be able to tell that the
+    footage is a sample of the period rather than a continuous record of it.
+    """
+    recorder.start(SIZE, 10.0)
+    feed(recorder, frame, [0.0, 1.0, 2.0, 3.0, 4.0])
+    recorder.stop(timeout=5.0)
+
+    data = sidecar_of(writers[0])
+
+    assert data["duration_seconds"] == 0.5
+    assert data["covers_seconds"] == 4.0
+
+
+def test_a_segment_that_lost_nothing_is_marked_continuous(
+    recorder: SegmentRecorder, writers: list[FakeWriter], frame: np.ndarray
+) -> None:
+    recorder.start(SIZE, 30.0)
+    feed(recorder, frame, [0.0, 1 / 30, 2 / 30])
+    recorder.stop(timeout=5.0)
+
+    data = sidecar_of(writers[0])
+
+    assert data["dropped_frames"] == 0
+    assert data["continuous"] is True
+
+
+def test_a_segment_that_dropped_frames_says_so(
+    recorder: SegmentRecorder, writers: list[FakeWriter], frame: np.ndarray
+) -> None:
+    """The count is per segment, not the lifetime total of the process."""
+    recorder.start(SIZE, 30.0)
+    feed(recorder, frame, [0.0, 1 / 30, 2 / 30])
+    recorder.stats.dropped_frames += 7
+    recorder.stop(timeout=5.0)
+
+    data = sidecar_of(writers[0])
+
+    assert data["dropped_frames"] == 7
+    assert data["continuous"] is False
+
+
+def test_a_camera_that_under_delivers_is_not_continuous(
+    recorder: SegmentRecorder, writers: list[FakeWriter], frame: np.ndarray
+) -> None:
+    """Three frames spanning a second, written as 30fps, play for a tenth of it.
+
+    Nothing was dropped -- every frame the camera produced was written -- and
+    the clip still runs ten times too fast. A reviewer who trusts `continuous`
+    over a bare frame count has to be told that.
+    """
+    recorder.start(SIZE, 30.0)
+    feed(recorder, frame, [0.0, 0.5, 1.0])
+    recorder.stop(timeout=5.0)
+
+    data = sidecar_of(writers[0])
+
+    assert data["dropped_frames"] == 0
+    assert data["continuous"] is False
+
+
 def test_telemetry_is_recorded_against_the_segment_start(
     recorder: SegmentRecorder, writers: list[FakeWriter], frame: np.ndarray
 ) -> None:
@@ -520,9 +585,11 @@ def test_a_discarded_segment_leaves_no_file(
 
     recorder.start(SIZE, 30.0)
     recorder.submit(frame, monotonic=0.0, wall_time=WALL)
-    wait_until(lambda: bool(recorder.stats.last_error))
+    # The writer thread records the error before it discards the partial file,
+    # so waiting on last_error would race the very unlink being asserted on.
+    wait_until(lambda: bool(writers) and not writers[0].path.exists())
 
-    assert not writers[0].path.exists()
+    assert recorder.stats.last_error == "encoder died"
     assert recorder.stats.segments_written == 0
 
 

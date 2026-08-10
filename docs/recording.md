@@ -102,13 +102,22 @@ records. An **explicit** choice never falls back: if you pinned a backend, a
 silent substitution would hide the real problem.
 
 ffmpeg is preferred because it accepts a bitrate target and a tuning preset, and
-because it finalises the container correctly even when it is killed. Two flags in
-its command line are there specifically for a car:
+because it can be told to write a container that survives being cut off. Two
+flags in its command line are there specifically for a car:
 
 - `-g <fps × 2>` — a keyframe every two seconds, which bounds how much of a
   segment a corrupt write can destroy and lets a player seek.
-- `-movflags +faststart` — writes the index up front, so a segment truncated by a
-  power cut is still playable rather than an unseekable stub.
+- `-movflags +frag_keyframe+empty_moov+default_base_moof` — a **fragmented** MP4.
+  The header is written before the first frame, and every keyframe closes a
+  fragment, so a file the power cut off mid-write is a valid MP4 up to the last
+  completed fragment — with the keyframe interval above, within two seconds of
+  the cut.
+
+  The obvious-looking `+faststart` does *not* do this. It relocates the index
+  after muxing has finished, which a process killed mid-segment never reaches:
+  the file is left with no `moov` atom and nothing is recoverable from it. For a
+  dashcam that is the segment containing the collision, so the fragmented
+  container is worth its small per-fragment overhead.
 
 The OpenCV fallback uses `mp4v`, which is present in every OpenCV wheel. `avc1`
 would be better but ships only where OpenCV was built against a licensed H.264
@@ -119,7 +128,8 @@ encoder. There is no bitrate control on this path.
 ```mermaid
 flowchart LR
     RAW["raw frame<br/>2560×720"] --> STRIP["strip_metadata()<br/>drop 30px"]
-    STRIP --> EVEN["crop_to_even()<br/>H.264 needs even dims"]
+    STRIP --> SCALE["downscale()<br/><i>if scale &lt; 1.0</i>"]
+    SCALE --> EVEN["crop_to_even()<br/>H.264 needs even dims"]
     EVEN --> BURN["burn local timestamp<br/><i>if burn_timestamp</i>"]
     BURN --> ENC["encoder"]
 
@@ -140,6 +150,23 @@ computation would be matched as scene content.
 Set `recording.burn_timestamp = false` to turn it off — but container metadata
 does not survive a re-encode, a screenshot or a messaging app, and pixels do.
 
+### When the camera gives you more than the encoder can carry
+
+`recording.scale` shrinks the frame between the strip and the crop, and it is
+the last lever available when the first one is gone. Ordinarily you would ask
+the camera for a smaller mode with `camera.width` and `camera.height` — but a
+UVC device is free to substitute its nearest mode instead of refusing, and some
+dual-fisheye modules publish exactly one. A module that answers every request
+with 4000×1200 is asking the CM5 for 2.6× the pixels it was measured against,
+and no camera setting will talk it down.
+
+Halving the scale quarters the encoder's work. It costs resolution in the
+recording only: `scale` is applied after the snapshot is published, so preview,
+panorama, depth and the HUD keep working from the full frame.
+
+Change it, then run `vectra180 doctor` — the encoder benchmark applies the same
+scale, so its number is the one you will actually get.
+
 ## Sidecars
 
 Every segment gets a `.json` beside it, written when the segment closes.
@@ -149,6 +176,9 @@ Every segment gets a `.json` beside it, written when the segment closes.
   "clip": "VEC_20260809_142530.mp4",
   "started_at": "2026-08-09T14:25:30+00:00",
   "duration_seconds": 60.033,
+  "covers_seconds": 60.033,
+  "dropped_frames": 0,
+  "continuous": true,
   "frames": 1801,
   "fps": 30.0,
   "width": 2530,
@@ -169,13 +199,39 @@ Every segment gets a `.json` beside it, written when the segment closes.
 | Field | Meaning |
 |---|---|
 | `started_at` | ISO 8601, UTC, from the first frame's wall time |
-| `duration_seconds` | `frames / fps` — derived, not measured from the container |
+| `duration_seconds` | `frames / fps` — how long the clip **plays for** |
+| `covers_seconds` | How long a stretch of road the clip **spans**, from the monotonic clock |
+| `dropped_frames` | Frames the encoder could not keep up with during this segment |
+| `continuous` | `true` only when nothing was dropped **and** the clip plays for as long as the road it covers, within 5 % |
 | `locked` | Whether this clip was protected while it was being written |
 | `lock_reasons` | `gsensor`, `manual`, or both |
 | `telemetry` | Every sample collected during the segment, each with `offset_seconds` from the segment start |
 
 `offset_seconds` is a **monotonic** offset, so it lines up with playback position
 regardless of what the wall clock did.
+
+The 5 % on `continuous` is slack for the segment's clock starting fractionally
+before its first frame arrives, not a tolerance for lost footage: `dropped_frames`
+must still be exactly `0`.
+
+### Playback length is not elapsed time
+
+`duration_seconds` and `covers_seconds` are equal only when every frame of the
+period made it into the file. When the encoder falls behind, the clip still
+plays smoothly — it is simply missing frames, so a minute of road plays back in
+less than a minute.
+
+A camera can cost you the same time without dropping a single frame. One that
+advertises 30fps and delivers 17 produces footage the recorder writes in full,
+labels 30fps, and plays half again too fast. `dropped_frames` stays at `0`
+because nothing was ever thrown away; `covers_seconds` still runs ahead of
+`duration_seconds`, and `continuous` is `false`.
+
+This matters if the footage is ever used as evidence. A reviewer who reads only
+`duration_seconds` will assume a real-time record; `continuous: false` says
+plainly that it is not. Check `continuous` before relying on a clip, and run
+`vectra180 doctor` if it is `false` — a failing `encoder` check is the usual
+cause, a `camera` check measuring below the requested rate the other.
 
 A sidecar write that fails is logged and ignored. **A missing sidecar must never
 cost you the video** — the clip is still listed, still playable and still
@@ -268,6 +324,12 @@ and could race the writer on a nearly full card.
 **The segment being written is in the keep set**, passed explicitly by the
 recorder, so it can never be pruned out from under the encoder.
 
+**A locked segment skips the pass.** When a segment closes it either moves to
+`events/` or triggers retention, never both — a clip that was protected while it
+was being written goes straight into `events/`, and the budgets are enforced at
+the next ordinary close instead. At sixty-second segments that is a minute's
+delay on a card that is already inside its limits.
+
 A clip and its sidecar are deleted together. If the video will not delete — a
 read-only card, a permissions problem — the sidecar is left alone and the pruner
 moves on; it never orphans a sidecar for a file that still exists.
@@ -298,8 +360,8 @@ are worst at.
 | Encoder stalls | Queue fills, frames dropped and counted. Capture rate is unaffected. |
 | A segment fails to write | The file is discarded, `stats.last_error` records why, and a fresh segment opens on the next frame. The session continues. |
 | A segment produced no frames | The empty file is deleted. An empty clip occupies a retention slot and plays as broken. |
-| Card fills up | Oldest loop clips are pruned until both budgets are satisfied. `events/` is untouched. |
-| Power cut | Only the segment in flight is lost, and `+faststart` means even that is usually playable. |
+| Card fills up | Oldest loop clips are pruned until the loop budget is satisfied; `events/` is untouched by that pass and reclaimed only against `max_event_bytes`. |
+| Power cut | On the ffmpeg path the clip plays up to the last completed fragment — within two seconds of the cut. Its sidecar is lost, so the browser shows no duration for it. On the OpenCV path the segment in flight is unplayable. |
 | Sidecar write fails | Logged and ignored. The clip survives. |
 | Clock jumps when NTP settles | Nothing. Durations came from the monotonic clock; only subsequent filenames change. |
 | ffmpeg dies mid-segment | Its stderr is surfaced in the raised error and lands in `stats.last_error`. A new segment opens. |

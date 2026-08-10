@@ -124,8 +124,10 @@ Every key is documented in place. The ones that matter on day one:
 ```toml
 [camera]
 # /dev/video0 is assigned in enumeration order and moves when a second UVC
-# device appears. The by-id link does not. `ls -l /dev/v4l/by-id/`
-device = "/dev/v4l/by-id/usb-..._Dual_Fisheye-video-index0"
+# device appears. A by-path link does not: it names the USB socket, so on a
+# fixed install it always means the camera you cabled to that connector.
+# `ls -l /dev/v4l/by-path/` -- and see the note below before using by-id.
+device = "/dev/v4l/by-path/platform-xhci-hcd.1-usb-0:1:1.0-video-index0"
 width = 2560       # whatever --list-formats-ext told you
 height = 720
 fps = 30
@@ -140,6 +142,18 @@ threshold_g = 0.6          # lower catches more; see below
 
 [server]
 host = "127.0.0.1"         # see access from a phone, below
+```
+
+**`by-path` or `by-id`?** `by-path` names the socket, `by-id` names the make,
+model and serial the device reports. On a car install the camera is cabled to one
+connector and stays there, so `by-path` is the one that means what you want. Use
+`by-id` only if the camera moves between ports — and check first that it reports
+a serial number, because two identical modules that both report none produce
+colliding `by-id` names and you are back to enumeration order:
+
+```bash
+ls -l /dev/v4l/by-path/
+ls -l /dev/v4l/by-id/
 ```
 
 ---
@@ -241,14 +255,22 @@ converter without hold-up capacitance. If the Pi reboots every time the engine
 starts, that is what happened. A supply rated for automotive transients fixes
 it; so does powering from a circuit that stays up during cranking.
 
-**Cutting power mid-write.** A hard cut costs the segment being written and
-nothing else. That is bounded by `segment_seconds`, so 60 risks a minute and 15
-risks fifteen seconds, at the cost of four times as many files. Everything
-already closed is intact.
+**Cutting power mid-write.** Everything already closed is intact. The segment
+being written survives too, up to a point: ffmpeg is asked for a *fragmented*
+MP4, whose header is written before the first frame and which closes a fragment
+at every keyframe, so the file plays up to the last completed fragment — about
+two seconds before the cut. What is lost is its `.json` sidecar, which is only
+written at close, so the clip appears in the browser with no duration.
 
-If losing that last minute is unacceptable, a small UPS HAT and a shutdown
-script are the proper fix. `systemctl stop vectra180` sends `SIGTERM`, which
-finalises the open segment before exiting:
+Two things spoil that. Recording without ffmpeg falls back to the OpenCV writer,
+which cannot produce a recoverable partial file at all — install ffmpeg. And a
+cut during the card's own flush can still corrupt the tail; `segment_seconds`
+bounds the worst case, so 60 risks a minute and 15 risks fifteen seconds, at the
+cost of four times as many files.
+
+If losing anything is unacceptable, a small UPS HAT and a shutdown script are the
+proper fix. `systemctl stop vectra180` sends `SIGTERM`, which finalises the open
+segment and writes its sidecar before exiting:
 
 ```bash
 sudo systemctl stop vectra180 && sudo poweroff
@@ -294,14 +316,14 @@ directory. It is the fastest way to find out whether the install will work
 before trusting it with a drive.
 
 ```
-[ ok ] environment: vectra180 1.0.0 on Linux aarch64, python 3.11.2, ...
+[ ok ] environment: vectra180 1.0.0 on Linux aarch64, python 3.11.2, opencv 4.10.0, numpy 2.1.3
 [ ok ] ffmpeg: /usr/bin/ffmpeg
 [ ok ] storage: /media/footage: 412.7 GB free, 0 loop clip(s), 0 locked clip(s)
 [ ok ] service: http://0.0.0.0:8080 (network, token required)
-[ ok ] devices: [0] Camera 0 (/dev/video0)
+[ ok ] devices: v4l2[0] USB 2.0 Camera (/dev/video0) 2560x720
 [ ok ] camera: 2560x720 via v4l2, 29.8 fps measured (30 requested)
 [ ok ] telemetry: IMU present: 1.00 g total, gyro +0.00/-0.01/+0.00 rad/s
-[ ok ] encoder: FFmpegWriter at 2560x720 preset 'ultrafast': 44.2 fps (30 needed)
+[ ok ] encoder: FFmpegWriter at 2530x720 preset 'ultrafast': 44.2 fps (30 needed)
 
 All checks passed.
 ```
@@ -369,7 +391,9 @@ exceeds `incident.threshold_g`, the open clip is protected and — with
 closed. The run-up to a collision is usually the part that matters, and by the
 time the sensor fires that footage is in the previous file.
 
-Protected clips move to `events/` and are never touched by ordinary pruning.
+Protected clips move to `events/`, which the loop pruner never touches. They are
+reclaimed only against each other, oldest first, and only once they exceed
+`recording.max_event_bytes` between them.
 
 Tuning, from a stationary start:
 

@@ -65,9 +65,17 @@ Tailscale, or a reverse proxy that terminates TLS. Do not port-forward it.
 - `/healthz` is the one route that answers without a token, so a monitor can
   watch the service without holding the operator's secret. It reports liveness
   and nothing about the footage.
+- `POST` and `DELETE` are rejected when the request carries an `Origin` header
+  that does not match `Host`. A browser attaches `Origin` to every cross-site
+  request and a page cannot forge it, so another site open in the driver's
+  browser cannot make their own dashcam delete a clip. A missing header is
+  accepted, because non-browser clients — `curl`, the CLI — send none.
 - Clip names are validated and then matched against the actual inventory rather
   than joined onto a path, so a crafted name cannot escape the recording
   directory. Static assets are resolved and checked to be inside `static/`.
+- Request bodies are capped at 64 KiB and drained before the response. No
+  endpoint takes one; an unread body would desynchronise the next request on a
+  keep-alive connection.
 - The systemd unit in `deploy/` runs as an unprivileged `vectra` user with
   `ProtectSystem=strict`, `NoNewPrivileges`, and a `ReadWritePaths` allowlist
   covering only the recording directory.
@@ -86,9 +94,11 @@ Tailscale, or a reverse proxy that terminates TLS. Do not port-forward it.
 ### Dependencies
 
 The runtime is OpenCV and NumPy, plus an `ffmpeg` binary if one is present.
-CI runs `pip-audit` against the resolved dependency set on every push, and
-Dependabot opens weekly update pull requests. CodeQL analyses the Python source
-weekly and on every pull request.
+CI runs `pip-audit --strict` against the resolved dependency set on every push
+to `main` and every pull request, and Dependabot opens weekly update pull
+requests for the Python, GitHub Actions and Docker ecosystems. CodeQL analyses
+the Python source on the same triggers plus a weekly schedule, so a newly
+published advisory is found without waiting for the next commit.
 
 ## Privacy, briefly
 

@@ -68,8 +68,9 @@ class CameraSource:
 
         target: int | str = self._config.device or self._config.index
         attempts: list[str] = []
+        candidates = resolve_backend(self._config.backend)
 
-        for backend in resolve_backend(self._config.backend):
+        for backend in candidates:
             capture = cv2.VideoCapture(target, backend)
             if not capture.isOpened():
                 capture.release()
@@ -80,7 +81,12 @@ class CameraSource:
             ok, _ = capture.read()
             if not ok:
                 capture.release()
-                attempts.append(f"{backend_name(backend)}: opened but returned no frames")
+                # This is what a camera another program already holds looks
+                # like: the handle opens, the stream never starts. Saying so
+                # saves an hour spent on cables and drivers.
+                attempts.append(
+                    f"{backend_name(backend)}: opened but returned no frames (another program may be using this camera)"
+                )
                 continue
 
             self._capture = capture
@@ -94,6 +100,36 @@ class CameraSource:
                 self.height,
                 self.fps,
             )
+            # Falling through to a second driver is not a neutral retry when
+            # the camera is addressed by index. Backends enumerate devices in
+            # their own order -- a laptop with a USB fisheye and a built-in
+            # webcam can have MSMF calling the fisheye 0 while DirectShow
+            # calls the webcam 0 -- so a fallback can quietly start recording
+            # a completely different camera.
+            if backend != candidates[0] and not self._config.device:
+                log.warning(
+                    "%s could not be used, so camera %s was opened via %s instead -- "
+                    "an index means a different device on a different backend. "
+                    "Run 'vectra180 devices' and pin camera.backend if this is the wrong camera",
+                    backend_name(candidates[0]),
+                    target,
+                    backend_name(backend),
+                )
+            # A UVC device offers a fixed list of modes and silently substitutes
+            # the nearest one it has. Asking for a rate it cannot do at full
+            # resolution is answered with a smaller picture, not an error, and
+            # an INFO line reading 640x480 is easy to scroll past on a machine
+            # that was meant to be recording the road at 2560x720.
+            wanted = (self._config.width, self._config.height)
+            if wanted != (0, 0) and wanted != (self.width, self.height):
+                log.warning(
+                    "camera gave %dx%d, not the requested %dx%d -- run 'vectra180 doctor' "
+                    "to see the modes this device really offers",
+                    self.width,
+                    self.height,
+                    wanted[0],
+                    wanted[1],
+                )
             return
 
         detail = "; ".join(attempts) or "no capture backends available"
@@ -105,11 +141,15 @@ class CameraSource:
         The FOURCC must be set before the resolution: a UVC device advertises
         different resolution tables per pixel format, and asking for 2560x720
         while still in YUYV mode silently lands on a much smaller mode.
+
+        A width and height of zero mean "whatever the driver opens in", so the
+        resolution is left untouched rather than forced.
         """
         cfg = self._config
         capture.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter.fourcc(*cfg.fourcc))
-        capture.set(cv2.CAP_PROP_FRAME_WIDTH, cfg.width)
-        capture.set(cv2.CAP_PROP_FRAME_HEIGHT, cfg.height)
+        if cfg.width and cfg.height:
+            capture.set(cv2.CAP_PROP_FRAME_WIDTH, cfg.width)
+            capture.set(cv2.CAP_PROP_FRAME_HEIGHT, cfg.height)
         capture.set(cv2.CAP_PROP_FPS, cfg.fps)
         # A large driver-side buffer adds latency without helping a dashcam:
         # a stale frame is worth less than a dropped one. Not every backend

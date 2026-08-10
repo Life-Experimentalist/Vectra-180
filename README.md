@@ -45,7 +45,7 @@ in half.
 | | |
 |---|---|
 | **Loop recording** | Fixed-length segments into a loop directory, pruned oldest-first against a size budget and a free-space floor. |
-| **Incident lock** | The camera's IMU trips a threshold; the clip containing the moment is moved to `events/`, where pruning cannot reach it. |
+| **Incident lock** | The camera's IMU trips a threshold; the clip containing the moment is moved to `events/`, which the loop's pruning never touches — locked clips are reclaimed only against their own budget, oldest first. |
 | **Telemetry** | The accelerometer and gyroscope block the camera embeds in each frame is decoded, filtered into roll/pitch/yaw, and written to a JSON sidecar beside every clip. |
 | **Web interface** | Live MJPEG preview, clip browser, downloads, storage meter and a lock button — all from one self-contained page, no internet needed. |
 | **Panoramic view** | Both eyes dewarped, joined and levelled on the horizon, on request. Clips stay raw. |
@@ -116,6 +116,14 @@ vectra180 decode shot.jpg # is there really an IMU block in this frame?
 vectra180 view            # desktop control panel (needs the desktop extra)
 ```
 
+`vectra` is installed as a shorter alias for the same command — `vectra doctor`
+and `vectra180 doctor` are identical. From a checkout, prefix either with `uv
+run` to use the project environment without activating it:
+
+```bash
+uv run vectra doctor
+```
+
 Every subcommand and flag: **[docs/cli.md](docs/cli.md)**.
 
 ## How it works
@@ -165,8 +173,8 @@ TOML file, `VECTRA_*` environment variables, then command-line flags.
 
 [camera]
 device = "/dev/video0"
-width = 2560          # both fisheye views side by side
-height = 720
+width = 2560          # both fisheye views side by side; 0/0 = whatever
+height = 720          # mode the driver opens in
 fps = 30
 
 [recording]
@@ -235,10 +243,18 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request.
 
 ## Hardware
 
-Built for and tested on:
+Built for:
 
 - **Raspberry Pi Compute Module 5** on the CM5 IO board, Raspberry Pi OS Bookworm
 - **A dual-fisheye USB (UVC) camera** delivering both views side by side in one frame
+
+Where it has actually run: a dual-fisheye UVC module on a Windows development
+machine, plus the full test suite on Linux, macOS and Windows in CI. The CM5 is
+what the deployment runbook, the systemd unit and the encoder defaults are
+designed around, but this release has not yet recorded a drive on one. Treat the
+Pi instructions as tested-by-construction rather than road-proven, and see
+[deploy/README.md § Verify](deploy/README.md#9-verify) for what to confirm on
+your own board before trusting it.
 
 Nothing is CM5-specific. It runs on any Linux, macOS or Windows machine with a
 UVC camera; the Pi is simply where it lives in a car. If your camera works — or

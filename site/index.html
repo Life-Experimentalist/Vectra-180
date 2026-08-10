@@ -202,7 +202,7 @@
 				<div>
 					<a class="pill" href="https://github.com/Life-Experimentalist/Vectra-180/releases">
 						<em>v1.0.0</em>
-						<span>First stable release · Apache 2.0</span>
+						<span>Unreleased · not yet road-proven · Apache 2.0</span>
 					</a>
 
 					<h1>A dashcam that <span class="grad">sees in two eyes</span>.</h1>
@@ -284,7 +284,7 @@
 										<path d="M424 312q48-84 96 0" />
 									</g>
 								</g>
-								<text x="320" y="345" fill="#5c7183" font-family="monospace" font-size="12"
+								<text x="320" y="345" fill="#93a2ba" font-family="monospace" font-size="12"
 									text-anchor="middle">2560 × 720 · MJPG · 30 fps</text>
 							</svg>
 							<canvas id="demo-canvas" aria-hidden="true"></canvas>
@@ -665,8 +665,9 @@
 						<h3>Incident lock</h3>
 						<p>
 							The IMU trips a configurable threshold and the clip containing the moment moves to
-							<code>events/</code>, where the loop pruner cannot reach it. A button in the web interface
-							does the same thing by hand.
+							<code>events/</code>, which the loop pruner never touches — locked clips are reclaimed only
+							against their own budget, oldest first. A button in the web interface does the same thing
+							by hand.
 						</p>
 					</article>
 
@@ -915,16 +916,20 @@
 								<span class="grow"></span>
 								<button class="copy" type="button">copy</button>
 							</div>
-							<pre><code><span class="tok-ok">[ ok ]</span> environment: vectra180 1.0.0 on Linux aarch64
+							<pre><code><span class="tok-ok">[ ok ]</span> environment: vectra180 1.0.0 on Linux aarch64,
+       python 3.11.2, opencv 4.10.0, numpy 1.26.4
 <span class="tok-ok">[ ok ]</span> ffmpeg: /usr/bin/ffmpeg
-<span class="tok-ok">[ ok ]</span> storage: 38.4 GB free, 573 loop clip(s)
-<span class="tok-ok">[ ok ]</span> service: http://0.0.0.0:8080 (token required)
-<span class="tok-ok">[ ok ]</span> devices: /dev/video0 2560x720 @ 30fps
-<span class="tok-ok">[ ok ]</span> camera: 29.8 fps measured (30 requested)
-<span class="tok-ok">[ ok ]</span> telemetry: IMU present: 1.00 g total
-<span class="tok-warn">[warn]</span> encoder: 34.2 fps (30 needed)
-         <span class="tok-c">-&gt; little headroom; a warm cabin could
-            push it under</span>
+<span class="tok-ok">[ ok ]</span> storage: /var/lib/vectra180/recordings: 38.4 GB free,
+       573 loop clip(s), 12 locked clip(s)
+<span class="tok-ok">[ ok ]</span> service: http://0.0.0.0:8080 (network, token required)
+<span class="tok-ok">[ ok ]</span> devices: v4l2[0] USB 2.0 Camera (/dev/video0) 2560x720
+<span class="tok-ok">[ ok ]</span> camera: 2560x720 via v4l2, 29.8 fps measured (30 requested)
+<span class="tok-ok">[ ok ]</span> telemetry: IMU present: 1.00 g total,
+       gyro +0.01/-0.00/+0.02 rad/s
+<span class="tok-warn">[warn]</span> encoder: FFmpegWriter at 2530x720 preset 'ultrafast':
+       34.2 fps (30 needed)
+         <span class="tok-c">-&gt; there is little headroom; a warm cabin or a
+            background task could push it under</span>
 
 All critical checks passed with 1 warning(s).</code></pre>
 						</div>
@@ -1084,7 +1089,7 @@ All critical checks passed with 1 warning(s).</code></pre>
 								<tr>
 									<td><b>Storage</b></td>
 									<td>Footage on its own disk, not the boot card. An hour of default settings is
-										roughly 3.5&nbsp;GB.</td>
+										roughly 3.6&nbsp;GB.</td>
 								</tr>
 								<tr>
 									<td><b>Power</b></td>

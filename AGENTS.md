@@ -26,7 +26,7 @@ src/vectra180/
   config.py       dataclass config; defaults -> file -> VECTRA_* env -> flags
   engine.py       the capture thread; owns the pipeline and the frame clock
   doctor.py       hardware pre-flight, exercising the real path
-  errors.py       CaptureError, RecorderError, ServiceError, ConfigError
+  errors.py       VectraError and its five subclasses; everything raised here
   capture/        device enumeration, backend selection, reconnection
   telemetry/      ICM42688 decoder and the orientation filter
   imaging/        dewarp, stitch, stabilise, depth, HUD, layout
@@ -50,8 +50,9 @@ stop clips being written. Degrade, log, keep recording.
 
 ## Telemetry format
 
-The camera module embeds an ICM42688 block in the leftmost pixel columns of
-each frame. The payload is 20 bytes:
+The camera module embeds an ICM-42688 block in the frame's **first pixel
+column**, one byte per row. The wider metadata strip that `telemetry.metadata_width`
+crops away — 30 columns by default — contains it. The payload is 20 bytes:
 
 - 8 bytes: little-endian `uint64`, timestamp in microseconds
 - 12 bytes: six **big-endian** `int16` — accel X/Y/Z then gyro X/Y/Z

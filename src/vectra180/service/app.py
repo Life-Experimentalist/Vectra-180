@@ -35,6 +35,7 @@ import logging
 import mimetypes
 import re
 import socket
+import sys
 import threading
 import time
 from http import HTTPStatus
@@ -56,6 +57,23 @@ __all__ = ["VectraHTTPServer", "serve"]
 log = logging.getLogger(__name__)
 
 STATIC_DIR = Path(__file__).parent / "static"
+
+#: Content types for the bundled UI assets.
+#:
+#: These are pinned rather than looked up with :func:`mimetypes.guess_type`,
+#: which consults the Windows registry and reports ``text/plain`` for ``.js``
+#: on some installs. Paired with the ``nosniff`` header that would leave the
+#: panel a blank page, so the mapping is stated here instead of inherited
+#: from whatever the host machine happens to believe.
+_STATIC_TYPES = {
+    ".html": "text/html; charset=utf-8",
+    ".css": "text/css; charset=utf-8",
+    ".js": "text/javascript; charset=utf-8",
+    ".svg": "image/svg+xml",
+    ".png": "image/png",
+    ".ico": "image/vnd.microsoft.icon",
+    ".webmanifest": "application/manifest+json",
+}
 
 #: Bytes per chunk when streaming a clip. Large enough to keep the socket
 #: busy, small enough that a cancelled download frees memory promptly.
@@ -88,6 +106,23 @@ class VectraHTTPServer(ThreadingHTTPServer):
         if ":" in address[0]:
             self.address_family = socket.AF_INET6
         super().__init__(address, VectraRequestHandler)
+
+    def handle_error(self, request: Any, client_address: Any) -> None:
+        """Report a failed request without treating a hang-up as a fault.
+
+        A phone that leaves Wi-Fi mid-stream, a tab closed during a clip
+        download, and a keep-alive socket dropped between requests all arrive
+        here, and the base class prints a full traceback to stderr for each
+        one. For a dashcam whose UI is a phone that comes and goes, that is
+        the ordinary case rather than the exceptional one, and it would bury
+        the recorder's own messages. Those are logged at debug; anything else
+        is a real fault and keeps its traceback.
+        """
+        exc = sys.exc_info()[1]
+        if isinstance(exc, ConnectionError | TimeoutError):
+            log.debug("client %s hung up: %s", client_address, exc)
+            return
+        log.exception("unhandled error while serving %s", client_address)
 
 
 class VectraRequestHandler(BaseHTTPRequestHandler):
@@ -341,8 +376,8 @@ class VectraRequestHandler(BaseHTTPRequestHandler):
         if not candidate.is_file() or STATIC_DIR.resolve() not in candidate.parents:
             self._error(HTTPStatus.NOT_FOUND, f"no such asset: {relative}")
             return
-        content_type, _ = mimetypes.guess_type(candidate.name)
-        self._send(HTTPStatus.OK, candidate.read_bytes(), content_type or "application/octet-stream")
+        content_type = _STATIC_TYPES.get(candidate.suffix.lower(), "application/octet-stream")
+        self._send(HTTPStatus.OK, candidate.read_bytes(), content_type)
 
     def _encode_jpeg(self, image: Any) -> bytes:
         quality = self.app_config.server.preview_quality

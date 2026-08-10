@@ -18,7 +18,10 @@ both halves back.
 
 ## Wire format
 
-Twenty bytes, one per row, read from the luminance of the first column.
+Twenty bytes, one per row, written into the luminance of the first column. By the
+time the decoder sees them OpenCV has converted the frame to BGR, where a grey
+pixel carries the same value in every channel, so it reads channel `0` —
+`metadata_strip[:, 0, 0]` for a colour strip, `[:, 0]` for a single-channel one.
 
 | Offset | Size | Encoding | Field | Units |
 |---|---|---|---|---|

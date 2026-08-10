@@ -21,6 +21,7 @@ import sys
 import threading
 import time
 import tomllib
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, NoReturn
 
@@ -286,6 +287,18 @@ def test_the_camera_and_device_overrides_are_applied(config_file: str, capsys: p
     assert printed["camera"]["device"] == "/dev/video3"
 
 
+def test_the_backend_override_is_applied(config_file: str, capsys: pytest.CaptureFixture[str]) -> None:
+    """Pinning the driver from the command line is how you settle which camera
+    an index refers to without editing a file first."""
+    main(["config", "--config", config_file, "--backend", "msmf", "--json"])
+
+    assert json.loads(capsys.readouterr().out)["camera"]["backend"] == "msmf"
+
+
+def test_an_unknown_backend_is_refused(config_file: str) -> None:
+    assert main(["config", "--config", config_file, "--backend", "directshow"]) == 1
+
+
 def test_the_recording_directory_override_is_applied(
     config_file: str, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -401,7 +414,32 @@ def test_attached_cameras_are_listed(attached: Probe, capsys: pytest.CaptureFixt
     attached.found.append(device())
 
     assert main(["devices"]) == 0
-    assert "[0] USB 3.0 Camera" in capsys.readouterr().out
+    assert "v4l2[0] USB 3.0 Camera" in capsys.readouterr().out
+
+
+def test_a_camera_seen_on_two_backends_gets_the_index_caveat(
+    attached: Probe, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The listing is the moment to say it, because that is where the number
+    someone is about to copy into their config appears."""
+    attached.found += [device(), replace(device(), backend="dshow")]
+
+    assert main(["devices"]) == 0
+    assert "Indices are per-backend" in capsys.readouterr().out
+
+
+def test_one_backend_needs_no_caveat(attached: Probe, capsys: pytest.CaptureFixture[str]) -> None:
+    attached.found.append(device())
+
+    assert main(["devices"]) == 0
+    assert "Indices are per-backend" not in capsys.readouterr().out
+
+
+def test_an_unreadable_device_is_flagged_in_the_listing(attached: Probe, capsys: pytest.CaptureFixture[str]) -> None:
+    attached.found.append(replace(device(), readable=False))
+
+    assert main(["devices"]) == 0
+    assert "another program may hold it" in capsys.readouterr().out
 
 
 def test_nothing_attached_exits_nonzero_with_a_hint(attached: Probe, capsys: pytest.CaptureFixture[str]) -> None:
@@ -641,6 +679,18 @@ def test_both_shutdown_signals_are_handled(
     assert signal.SIGTERM in handlers
 
 
+@pytest.mark.skipif(not hasattr(signal, "SIGBREAK"), reason="SIGBREAK is Windows-only")
+def test_ctrl_break_is_handled_where_it_exists(
+    run_argv: list[str], engines: list[FakeEngine], servers: list[FakeServer], handlers: dict[int, Any]
+) -> None:
+    """Left unhandled, Ctrl-Break kills the process mid-segment."""
+    del engines, servers
+
+    main(run_argv)
+
+    assert signal.SIGBREAK in handlers
+
+
 def test_a_platform_without_sigterm_still_runs(
     run_argv: list[str],
     engines: list[FakeEngine],
@@ -650,12 +700,46 @@ def test_a_platform_without_sigterm_still_runs(
 ) -> None:
     """Every signal is looked up by name, so a missing one is skipped, not fatal."""
     del servers
+    sigterm = int(signal.SIGTERM)
     monkeypatch.delattr(signal, "SIGTERM")
 
     assert main(run_argv) == 0
 
     assert engines[0].stopped
-    assert list(handlers) == [signal.SIGINT]
+    assert signal.SIGINT in handlers
+    assert sigterm not in handlers
+
+
+def test_a_second_interrupt_does_not_cut_the_shutdown_short(
+    config_file: str,
+    tmp_path: Path,
+    engines: list[FakeEngine],
+    servers: list[FakeServer],
+    handlers: dict[int, Any],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Pressing Ctrl-C again is the natural reflex, and it must stay harmless.
+
+    Both presses land on the same handler, so the second one only says that the
+    open segment is still being finalised -- it does not abandon it.
+    """
+    del servers
+    result: list[int] = []
+    argv = ["run", "--config", config_file, "--recording-dir", str(tmp_path / "clips")]
+    thread = threading.Thread(target=lambda: result.append(main(argv)), daemon=True)
+    thread.start()
+    try:
+        wait_until(lambda: bool(engines) and engines[0].started and signal.SIGINT in handlers)
+        with caplog.at_level(logging.INFO, logger="vectra180"):
+            handlers[signal.SIGINT](int(signal.SIGINT), None)
+            handlers[signal.SIGINT](int(signal.SIGINT), None)
+        thread.join(timeout=5.0)
+    finally:
+        assert not thread.is_alive(), "the run command ignored the shutdown signal"
+
+    assert result == [0]
+    assert engines[0].stopped
+    assert "already shutting down" in caplog.text
 
 
 def test_a_termination_signal_ends_an_open_ended_run(

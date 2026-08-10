@@ -12,9 +12,29 @@ shown or encoded, or it appears as a column of noise down the left edge.
 
 from __future__ import annotations
 
+import cv2
 import numpy as np
 
-__all__ = ["crop_to_even", "split_stereo", "strip_metadata"]
+__all__ = ["crop_to_even", "downscale", "split_stereo", "strip_metadata"]
+
+
+def downscale(image: np.ndarray, factor: float) -> np.ndarray:
+    """Shrink an image by ``factor``, or hand it back untouched at ``1.0``.
+
+    Encoding cost scales with pixel count, and a module that only offers one
+    mode leaves no other way to buy headroom: this camera answers every
+    resolution request with 4000x1200, which is 2.6 times the pixels the CM5
+    was measured against. Half-scale is a quarter of the work.
+
+    ``INTER_AREA`` averages the pixels it discards rather than sampling one of
+    them, which is what keeps number plates and lane markings readable instead
+    of aliased into noise.
+    """
+    if factor >= 1.0:
+        return image
+    height, width = image.shape[:2]
+    size = (max(2, round(width * factor)), max(2, round(height * factor)))
+    return cv2.resize(image, size, interpolation=cv2.INTER_AREA)
 
 
 def crop_to_even(image: np.ndarray) -> np.ndarray:

@@ -11,6 +11,15 @@ vectra180 decode    read the IMU block out of a captured frame
 vectra180 config    print the effective configuration
 ```
 
+`vectra` is installed as a shorter alias for the same entry point — `vectra
+doctor` and `vectra180 doctor` are the same command. This page uses the long
+name because that is what the systemd unit invokes; type whichever you prefer.
+Under [uv](https://docs.astral.sh/uv/), prefix either with `uv run`:
+
+```bash
+uv run vectra doctor
+```
+
 Nothing imports a GUI toolkit at module level, so `vectra180 run` starts on a
 headless Pi with no display libraries installed. `view` is the only command that
 needs the `desktop` extra, and it only imports it when you invoke it.
@@ -24,6 +33,7 @@ Available on every subcommand.
 | `--config PATH` | TOML config file. Default: the [platform config path](configuration.md#where-the-file-lives) |
 | `--camera N` | Override `camera.index` |
 | `--device PATH` | Override `camera.device`, e.g. `/dev/video0` |
+| `--backend NAME` | Override `camera.backend` — `auto`, `any`, `v4l2`, `dshow`, `msmf`, `avfoundation`, `gstreamer` |
 | `--recording-dir PATH` | Override `recording.directory` |
 | `-v`, `--verbose` | Debug logging |
 | `-q`, `--quiet` | Warnings and errors only |
@@ -62,9 +72,14 @@ vectra180 run
 | `--port PORT` | Listen port |
 | `--token SECRET` | Require this token on every request |
 
-`SIGINT` and `SIGTERM` both shut down cleanly — the open segment is finalised and
-its sidecar written, rather than left as a truncated file with no `moov` atom.
-That is why `systemctl stop` is safe and pulling the power is not.
+`SIGINT` (Ctrl-C), `SIGTERM` (`systemctl stop`) and `SIGBREAK` (Ctrl-Break on
+Windows) all shut down cleanly — the open segment is finalised and its sidecar
+written, rather than left as a truncated file with no `moov` atom. That is why
+`systemctl stop` is safe and pulling the power is not.
+
+Shutdown is not instant: it has to close the segment being written. A second
+Ctrl-C during that pause is logged and otherwise ignored, so the reflex to press
+it again cannot cost you the clip.
 
 On exit it reports what it did:
 
@@ -125,8 +140,8 @@ Sample output:
 [ ok ] ffmpeg: /usr/bin/ffmpeg
 [ ok ] storage: /var/lib/vectra180/recordings: 38.4 GB free, 573 loop clip(s), 18 locked clip(s)
 [ ok ] service: http://0.0.0.0:8080 (network, token required)
-[ ok ] devices: /dev/video0 2560x720 @ 30fps via V4L2
-[ ok ] camera: 2560x720 via V4L2, 29.8 fps measured (30 requested)
+[ ok ] devices: v4l2[0] USB 3.0 Camera (/dev/video0) 2560x720
+[ ok ] camera: 2560x720 via v4l2, 29.8 fps measured (30 requested)
 [ ok ] telemetry: IMU present: 1.00 g total, gyro +0.00/-0.00/+0.01 rad/s
 [warn] encoder: FFmpegWriter at 2530x720 preset 'ultrafast': 34.2 fps (30 needed)
          -> there is little headroom; a warm cabin or a background task could push it under
@@ -148,9 +163,9 @@ makes it usable in a provisioning script.
 | `ffmpeg` | never | not on `PATH` — the OpenCV writer will be used |
 | `storage` | the directory cannot be read, or is not writable | free space is below `min_free_bytes` |
 | `service` | `host` is public **and** `token` is empty | never |
-| `devices` | nothing responded to a probe | never |
+| `devices` | nothing responded to a probe, or every device opened but none streamed | at least one device opened but streamed nothing |
 | `camera` | it will not open, or opens and returns nothing | the driver gave a different mode than requested, or measured fps is under 80 % of requested |
-| `telemetry` | never | `metadata_width` is wider than the frame, or no IMU block decoded |
+| `telemetry` | never | `metadata_width` is at least as wide as the frame, or no IMU block decoded |
 | `encoder` | it will not start, or it is slower than `camera.fps` | it is under 125 % of `camera.fps` — little headroom |
 
 **The encoder check is the important one on a CM5.** There is no hardware H.264
@@ -162,9 +177,11 @@ clip with two thirds of its frames missing.
 IMU block. Recording, preview, the panorama and the web UI all work without it;
 only automatic incident detection needs it.
 
-**The camera check reads two frames back** for the later checks, because the
-telemetry decoder accepts a sample only once a second frame continues its
-timeline. Handed a single strip it always reports nothing. See
+**The camera check hands its last six frames to the two checks after it**, rather
+than one. The telemetry decoder accepts a sample only once a second frame
+continues its timeline, so a single strip always reports nothing; and the encoder
+benchmark cycles through several distinct frames so it measures the inter-frame
+work it will do on the road. See
 [Telemetry format](telemetry.md#telling-telemetry-from-image-data).
 
 Use `--no-camera` to validate a config on a machine with no hardware attached —
@@ -181,8 +198,8 @@ vectra180 devices
 ```
 
 ```
-/dev/video0  2560x720 @ 30fps via V4L2
-/dev/video2  1280x720 @ 30fps via V4L2
+v4l2[0] USB 3.0 Camera (/dev/video0)  2560x720 @ 30fps
+v4l2[2] Integrated Webcam (/dev/video2)  1280x720 @ 30fps
 ```
 
 | Flag | Effect |
@@ -192,13 +209,42 @@ vectra180 devices
 
 Exit code `1` if nothing responded, with a hint about the `video` group on Linux.
 
-This actually **opens** each index, which is why it takes a moment and why a
-camera already held by another process will not appear.
+This actually **opens** each index, which is why it takes a moment.
+
+### Every entry names its backend
+
+An index on its own does not name a camera. Each driver enumerates devices in
+its own order, so the same number is different hardware on different backends —
+on one Windows laptop MSMF numbers a USB fisheye `0` and the built-in webcam
+`1`, while DirectShow numbers the pair the other way round:
+
+```
+msmf[0] Camera 0 (index 0)  4000x1200 @ 30fps
+msmf[1] Camera 1 (index 1)  640x480 @ 30fps   (opened but streamed nothing -- another program may hold it)
+dshow[0] Camera 0 (index 0)  640x480 @ -1fps
+dshow[1] Camera 1 (index 1)  4000x1200 @ -1fps
+
+Indices are per-backend: the same number is a different camera on a different driver.
+Pin one with --backend, or camera.backend in the config.
+```
+
+Every usable driver is probed, so a camera appears once per backend that can see
+it. The resolution is the reliable way to tell them apart: a dual-fisheye module
+is the wide one. Pin the pair you want with `--backend`, or set `camera.backend`
+in the config so it survives a reboot.
+
+A device that **opens but streams nothing** is listed with that note rather than
+omitted. That is what a camera another program is already holding looks like,
+and it is worth saying rather than leaving off the list as though it were
+unplugged. See [Troubleshooting](troubleshooting.md#the-wrong-camera-is-recording).
 
 > On a Pi, prefer a stable path over an index. `/dev/video*` numbering is
 > assigned in enumeration order and can move between boots; a
-> `/dev/v4l/by-id/...` path never does. `ls -l /dev/v4l/by-id/` will show you
-> what is available.
+> `/dev/v4l/by-path/...` path names the USB socket instead and never does.
+> `ls -l /dev/v4l/by-path/` will show you what is available — see
+> [Configuration](configuration.md#camera) for when `by-id` is the better
+> choice. `camera.device` also sidesteps the per-backend numbering above
+> entirely.
 
 ---
 
@@ -321,8 +367,21 @@ Five view modes, selectable with keys `1`–`5`:
 | `5` | Depth |
 
 Live sliders adjust the stereo matcher without mutating shared state, which is
-how you tune `depth.focal_scale` against your actual lens by eye. Press `?` for
-the full key list.
+how you tune `depth.focal_scale` against your actual lens by eye.
+
+| Key | Action |
+|---|---|
+| `Space` | Save a snapshot |
+| `R` | Start or stop recording |
+| `L` | Lock the current clip |
+| `H` | Toggle the HUD |
+| `Z` | Reset the horizon |
+| `1`–`5` | Switch view mode |
+| `Esc` · `Ctrl+Q` | Exit |
+
+The same list is under **Help → Keyboard shortcuts**. Exiting while a recording
+is running asks first, because the answer decides whether the open segment is
+finalised.
 
 This is a desk-testing tool. **Leave the extra off on a Pi** — a headless
 recorder has no business installing a GUI toolkit, and `run` never imports one.

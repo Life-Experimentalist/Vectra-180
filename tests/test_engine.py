@@ -301,13 +301,19 @@ def test_telemetry_appears_once_a_second_frame_confirms_the_clock(engine: Engine
     assert second.sample.timestamp_us == FIRST_TIMESTAMP_US + FRAME_INTERVAL_US
 
 
-def test_disabling_telemetry_still_crops_the_strip(engine: Engine) -> None:
+def test_disabling_telemetry_keeps_the_whole_frame(engine: Engine) -> None:
+    """A module with no IMU must not lose its left edge to a phantom strip.
+
+    ``metadata_width`` describes a strip that only exists on modules that emit
+    one. With telemetry switched off there is nothing to crop, and cropping
+    anyway would silently discard image columns.
+    """
     engine.config.telemetry.enabled = False
     feed(engine, 3)
     snapshot = engine.snapshot()
     assert snapshot is not None
     assert snapshot.sample is None
-    assert snapshot.image.shape[1] == FRAME_WIDTH - METADATA_WIDTH
+    assert snapshot.image.shape[1] == FRAME_WIDTH
     assert engine.decoder.decoded_frames == 0
 
 
@@ -442,6 +448,23 @@ def test_recording_starts_with_the_frames_real_geometry(engine: Engine, writers:
     height, width = writers[0].frames[0].shape[:2]
     assert (height % 2, width % 2) == (0, 0)
     assert (height, width) == (FRAME_HEIGHT, FRAME_WIDTH - METADATA_WIDTH)
+
+
+def test_the_recording_scale_shrinks_the_clip_but_not_the_preview(engine: Engine, writers: list[FakeWriter]) -> None:
+    """The whole point of the setting: buy encoder headroom without giving up
+    the resolution the preview, depth and HUD work from."""
+    engine.config.recording.scale = 0.5
+    engine._process(frame_at(0))
+    engine.begin_recording()
+    engine._process(frame_at(1))
+    wait_until(lambda: bool(writers and writers[0].frames))
+
+    height, width = writers[0].frames[0].shape[:2]
+    snapshot = engine.snapshot()
+
+    assert (height, width) == (FRAME_HEIGHT // 2, (FRAME_WIDTH - METADATA_WIDTH) // 2)
+    assert snapshot is not None
+    assert snapshot.image.shape[:2] == (FRAME_HEIGHT, FRAME_WIDTH - METADATA_WIDTH)
 
 
 def test_beginning_recording_twice_is_a_no_op(recording: Engine) -> None:

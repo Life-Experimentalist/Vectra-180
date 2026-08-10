@@ -325,8 +325,10 @@ string looks like. Anything else is `404`.
 
 ### `POST /api/clips/<name>/protect`
 
-Moves a loop clip into `events/`, where pruning cannot reclaim it. The sidecar
-moves with it.
+Moves a loop clip into `events/`, which the loop's pruning never touches. The
+sidecar moves with it. This is protection, not permanence: `events/` has its own
+`max_event_bytes` budget, and once the locked clips exceed it between them the
+oldest are deleted.
 
 ```bash
 curl -X POST -H "Authorization: Bearer $TOKEN" \

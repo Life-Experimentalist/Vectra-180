@@ -32,7 +32,7 @@ from vectra180 import __version__
 from vectra180.capture import CameraSource, enumerate_devices
 from vectra180.config import EngineConfig
 from vectra180.errors import CaptureError, RecorderError
-from vectra180.imaging import strip_metadata
+from vectra180.imaging import crop_to_even, downscale, strip_metadata
 from vectra180.recorder import create_writer, ffmpeg_path, storage_stats
 from vectra180.telemetry import TelemetryDecoder
 
@@ -53,10 +53,15 @@ _CAPTURE_SAMPLES = 30
 #: Frames pushed through the encoder in the throughput benchmark.
 _ENCODE_SAMPLES = 30
 
-#: Frames kept back from the capture probe for the later checks. Two, because
-#: the telemetry decoder accepts a sample only once a second frame continues its
-#: timeline -- handed a single strip it always reports nothing.
-_KEPT_FRAMES = 2
+#: Frames kept back from the capture probe for the later checks.
+#:
+#: Two would satisfy the telemetry decoder, which accepts a sample only once a
+#: second frame continues its timeline. The encoder benchmark needs more: video
+#: codecs spend their time on what changed since the previous frame, so timing
+#: one frame written repeatedly measures an empty residual and reports a rate
+#: the camera will never see. Six distinct frames land within a few percent of
+#: thirty, and cost six frames of memory rather than thirty.
+_KEPT_FRAMES = 6
 
 #: Measured rate below this fraction of the configured rate is reported as a
 #: problem rather than noise.
@@ -143,7 +148,32 @@ def _check_devices(report: Report) -> None:
             "check the USB connection; on Linux confirm the user is in the 'video' group and that /dev/video* exists",
         )
         return
-    report.add("devices", OK, "; ".join(device.label for device in devices))
+
+    # The mode is printed alongside each entry because on Windows there are no
+    # device names to go by, and a dual-fisheye module's frame is unmistakable
+    # next to a webcam's: it is the wide one.
+    listing = "; ".join(
+        f"{device.label} {device.width}x{device.height}" + ("" if device.readable else " -- no frames")
+        for device in devices
+    )
+    if not any(device.readable for device in devices):
+        report.add(
+            "devices",
+            FAIL,
+            listing,
+            "every device opened but none streamed -- another program is almost certainly holding the "
+            "camera. Close it (including any other 'vectra180 run') and try again",
+        )
+    elif any(not device.readable for device in devices):
+        report.add(
+            "devices",
+            WARN,
+            listing,
+            "the entries marked 'no frames' opened but streamed nothing, which usually means another "
+            "program is holding them",
+        )
+    else:
+        report.add("devices", OK, listing)
 
 
 def _check_camera(report: Report, config: EngineConfig) -> list[np.ndarray]:
@@ -161,7 +191,8 @@ def _check_camera(report: Report, config: EngineConfig) -> list[np.ndarray]:
             "camera",
             FAIL,
             str(exc),
-            "run 'vectra180 devices' to see what is attached, then set camera.index or camera.device in the config",
+            "run 'vectra180 devices' to see what is attached, then set camera.index, camera.backend or "
+            "camera.device in the config -- the same index names different hardware on different backends",
         )
         return []
 
@@ -189,14 +220,22 @@ def _check_camera(report: Report, config: EngineConfig) -> list[np.ndarray]:
         measured = read / elapsed if elapsed > 0 else 0.0
         detail = f"{width}x{height} via {source.backend}, {measured:.1f} fps measured ({config.camera.fps} requested)"
 
-        if (width, height) != (config.camera.width, config.camera.height):
+        requested = (config.camera.width, config.camera.height)
+        native = requested == (0, 0)
+
+        if not native and (width, height) != requested:
             report.add(
                 "camera",
                 WARN,
                 f"{detail}; driver gave {width}x{height}, not the requested "
                 f"{config.camera.width}x{config.camera.height}",
-                "the requested mode is unsupported at this pixel format -- confirm the device "
-                "lists it (v4l2-ctl --list-formats-ext on Linux) or set camera.width/height to a real mode",
+                # Advising the width be lowered to match is only right once
+                # this is known to be the intended camera. A built-in webcam
+                # answering in place of the fisheye looks exactly like a mode
+                # substitution, and taking the advice would pin the mistake in.
+                f"check 'vectra180 devices' that {source.backend}[{config.camera.index}] is the camera you "
+                f"mean -- a built-in webcam looks like this. If it is right, set camera.width = {width} "
+                f"and camera.height = {height} to match it, or set both to 0 to accept its native mode",
             )
         elif measured < config.camera.fps * _RATE_TOLERANCE:
             report.add(
@@ -263,14 +302,23 @@ def _check_telemetry(report: Report, config: EngineConfig, images: list[np.ndarr
     )
 
 
+# Naming the wrong package manager is worse than naming none: it sends the
+# reader off to a command that does not exist on their machine.
+_FFMPEG_INSTALL = {
+    "win32": "winget install Gyan.FFmpeg, then open a new terminal so PATH is picked up",
+    "darwin": "brew install ffmpeg",
+}
+
+
 def _check_ffmpeg(report: Report) -> None:
     path = ffmpeg_path()
     if path is None:
+        how = _FFMPEG_INSTALL.get(sys.platform, "sudo apt install ffmpeg")
         report.add(
             "ffmpeg",
             WARN,
             "not on PATH -- recording will fall back to the OpenCV writer",
-            "install it (apt install ffmpeg) for bitrate control and reliable container finalisation",
+            f"install it ({how}) for bitrate control and reliable container finalisation",
         )
         return
     report.add("ffmpeg", OK, path)
@@ -319,17 +367,24 @@ def _check_storage(report: Report, config: EngineConfig) -> None:
 
 
 def _check_encoder(report: Report, config: EngineConfig, images: list[np.ndarray]) -> None:
-    """Time the encoder on frames the size the camera actually produces."""
+    """Time the encoder on the pixels the recorder would actually write."""
     if not images:
         report.add("encoder", WARN, "skipped -- no frame to encode")
         return
 
-    image = images[-1]
-    height, width = image.shape[:2]
-    # The recorder crops to even dimensions before encoding; match that here or
-    # the benchmark measures a size that will never be written.
-    size = (width - width % 2, height - height % 2)
-    frame = np.ascontiguousarray(image[: size[1], : size[0]])
+    # The metadata strip is removed and any downscale applied before encoding.
+    # A benchmark run at the camera's raw size measures work the recorder will
+    # never do, and at scale = 0.5 it would be four times too much of it.
+    strip = config.telemetry.metadata_width if config.telemetry.enabled else 0
+    if not 0 < strip < images[-1].shape[1]:
+        strip = 0
+    # Cycled rather than repeated: consecutive frames must differ for the
+    # encoder to do the inter-frame work it will do on the road.
+    frames = [
+        np.ascontiguousarray(crop_to_even(downscale(image[:, strip:], config.recording.scale))) for image in images
+    ]
+    height, width = frames[-1].shape[:2]
+    size = (width, height)
 
     workspace = Path(tempfile.mkdtemp(prefix="vectra-doctor-"))
     target = workspace / f"benchmark.{config.recording.container}"
@@ -347,8 +402,8 @@ def _check_encoder(report: Report, config: EngineConfig, images: list[np.ndarray
 
     try:
         started = time.monotonic()
-        for _ in range(_ENCODE_SAMPLES):
-            writer.write(frame)
+        for index in range(_ENCODE_SAMPLES):
+            writer.write(frames[index % len(frames)])
         writer.close()
         elapsed = time.monotonic() - started
     except RecorderError as exc:
@@ -367,13 +422,16 @@ def _check_encoder(report: Report, config: EngineConfig, images: list[np.ndarray
         f"{rate:.1f} fps ({config.camera.fps} needed)"
     )
     if rate < config.camera.fps:
-        report.add(
-            "encoder",
-            FAIL,
-            detail,
-            "the encoder cannot keep up and frames will be dropped. Lower camera.fps or "
-            "camera.width/height, or keep recording.preset at 'ultrafast'",
-        )
+        # Ordered by what wins most: on a machine without ffmpeg the OpenCV
+        # writer has no bitrate control and spends the difference on the disk,
+        # so installing it is worth more than any setting below it.
+        remedy = "the encoder cannot keep up and frames will be dropped. "
+        if ffmpeg_path() is None:
+            remedy += "Install ffmpeg, then lower "
+        else:
+            remedy += "Lower "
+        remedy += "camera.fps or camera.width/height, or keep recording.preset at 'ultrafast'"
+        report.add("encoder", FAIL, detail, remedy)
     elif rate < config.camera.fps / _RATE_TOLERANCE:
         report.add(
             "encoder",

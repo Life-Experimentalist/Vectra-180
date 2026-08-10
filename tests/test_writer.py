@@ -129,11 +129,19 @@ def test_a_very_slow_frame_rate_still_gets_a_keyframe(spawned: list[FakeProcess]
     assert spawned[0].command[spawned[0].command.index("-g") + 1] == "1"
 
 
-def test_the_index_is_written_up_front(spawned: list[FakeProcess], tmp_path: Path) -> None:
-    """A segment truncated by a power cut must still play."""
+def test_the_container_is_fragmented(spawned: list[FakeProcess], tmp_path: Path) -> None:
+    """A segment truncated by a power cut must still play.
+
+    Only a fragmented MP4 does that. ``+faststart`` -- the obvious-looking
+    choice -- relocates the index *after* muxing finishes, so a process killed
+    mid-segment leaves a file with no ``moov`` atom and no recoverable footage.
+    """
     FFmpegWriter(tmp_path / "clip.mp4", SIZE, 30.0, binary="ffmpeg")
 
-    assert spawned[0].command[spawned[0].command.index("-movflags") + 1] == "+faststart"
+    flags = spawned[0].command[spawned[0].command.index("-movflags") + 1]
+    assert "frag_keyframe" in flags
+    assert "empty_moov" in flags
+    assert "faststart" not in flags
 
 
 # -- ffmpeg behaviour --------------------------------------------------------

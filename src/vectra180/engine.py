@@ -38,6 +38,7 @@ from vectra180.imaging import (
     PanoramaStitcher,
     StereoDepthEngine,
     crop_to_even,
+    downscale,
     split_stereo,
     strip_metadata,
 )
@@ -146,10 +147,16 @@ class Engine:
             self.recorder.stop()
 
     def _process(self, frame: Frame) -> None:
-        image, strip = strip_metadata(frame.image, self.config.telemetry.metadata_width)
+        # The strip is only cropped when telemetry is switched on. A module
+        # without an IMU has no metadata columns, and cutting them off anyway
+        # would quietly throw away the left edge of the left fisheye.
+        if self.config.telemetry.enabled:
+            image, strip = strip_metadata(frame.image, self.config.telemetry.metadata_width)
+        else:
+            image, strip = frame.image, None
 
         sample = None
-        if self.config.telemetry.enabled and strip is not None:
+        if strip is not None:
             sample = self.decoder.decode_strip(strip)
 
         dt = 0.0 if self._last_monotonic is None else frame.monotonic - self._last_monotonic
@@ -190,8 +197,11 @@ class Engine:
         The timestamp is drawn on a copy: the snapshot published for preview
         and depth must stay clean, or the burned text would end up inside a
         disparity computation.
+
+        Any downscale happens first, so the burned clock is drawn at the size
+        it will be read at rather than shrunk with everything else.
         """
-        recorded = crop_to_even(image)
+        recorded = crop_to_even(downscale(image, self.config.recording.scale))
         if not self.config.recording.burn_timestamp:
             return recorded
         stamped = recorded.copy()

@@ -19,12 +19,41 @@
 	--line-2: #2b3550;
 	--text: #e8edf7;
 	--muted: #94a3b8;
-	--dim: #64748b;
+	--dim: #7b8aa4;
 	--cyan: #00f2fe;
 	--blue: #4facfe;
 	--ok: #34d399;
 	--warn: #fbbf24;
 	--bad: #f87171;
+
+	/* Code windows carry their own palette. They used to be pinned dark in
+	   both themes; a white terminal in a white page reads better than a black
+	   hole punched through it, so light mode gets a real light scheme with
+	   syntax colours re-picked for contrast against white. */
+	--code-bg: color-mix(in srgb, #05080f 88%, var(--panel));
+	--code-fg: #d6e3f5;
+	--code-dim: #7d8ba3;
+	--code-rule: rgb(255 255 255 / 0.07);
+	--code-chip: rgb(255 255 255 / 0.04);
+	--code-chip-line: rgb(255 255 255 / 0.12);
+	--tok-c: #6b7c99;
+	--tok-k: #7ee0f2;
+	--tok-s: #a8e6a3;
+	--tok-f: #f0c987;
+	--tok-ok: #6ee7b7;
+	--tok-warn: #fcd34d;
+	--tok-bad: #fca5a5;
+
+	/* Surfaces that stand in for video -- the hero demo and the interface map's
+	   viewport -- are black under both themes, because that is what a picture
+	   looks like before it arrives. Their chrome cannot follow --panel and
+	   --dim: in light mode those are white and a pale grey, and the labels
+	   would dissolve into the frame. These are fixed, and deliberately so. */
+	--stage: #05080f;
+	--stage-chrome: color-mix(in srgb, #10162a 74%, transparent);
+	--stage-line: #1e2640;
+	--on-stage: #cddaeb;
+	--on-stage-dim: #93a2ba;
 
 	--accent-grad: linear-gradient(100deg, var(--cyan), var(--blue));
 	--glow: 0 0 0 1px rgb(0 242 254 / 0.25), 0 12px 48px -12px rgb(0 242 254 / 0.35);
@@ -38,6 +67,9 @@
 	--gutter: clamp(1.1rem, 4vw, 2.5rem);
 
 	--ease: cubic-bezier(0.22, 1, 0.36, 1);
+
+	/* A circled checkmark, used as a mask so the colour stays themeable. */
+	--tick: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'%3E%3Ccircle cx='10' cy='10' r='9' fill='none' stroke='%23000' stroke-width='1.4' opacity='.55'/%3E%3Cpath d='M5.9 10.3l2.7 2.8 5.5-5.9' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
 }
 
 :root[data-theme="light"],
@@ -52,12 +84,26 @@ html[data-theme="light"] {
 	--line-2: #c3cfe2;
 	--text: #0b1220;
 	--muted: #4a5769;
-	--dim: #6b7a90;
-	--cyan: #0694a8;
+	--dim: #616f85;
+	--cyan: #08788d;
 	--blue: #2563eb;
 	--ok: #047857;
 	--warn: #a16207;
 	--bad: #b91c1c;
+
+	--code-bg: #ffffff;
+	--code-fg: #1f2937;
+	--code-dim: #616f85;
+	--code-rule: rgb(15 23 42 / 0.09);
+	--code-chip: rgb(15 23 42 / 0.03);
+	--code-chip-line: rgb(15 23 42 / 0.14);
+	--tok-c: #64748b;
+	--tok-k: #0369a1;
+	--tok-s: #15803d;
+	--tok-f: #b45309;
+	--tok-ok: #047857;
+	--tok-warn: #a16207;
+	--tok-bad: #b91c1c;
 
 	--glow: 0 0 0 1px rgb(37 99 235 / 0.18), 0 14px 42px -16px rgb(37 99 235 / 0.35);
 }
@@ -74,12 +120,26 @@ html[data-theme="light"] {
 		--line-2: #c3cfe2;
 		--text: #0b1220;
 		--muted: #4a5769;
-		--dim: #6b7a90;
-		--cyan: #0694a8;
+		--dim: #616f85;
+		--cyan: #08788d;
 		--blue: #2563eb;
 		--ok: #047857;
 		--warn: #a16207;
 		--bad: #b91c1c;
+
+		--code-bg: #ffffff;
+		--code-fg: #1f2937;
+		--code-dim: #616f85;
+		--code-rule: rgb(15 23 42 / 0.09);
+		--code-chip: rgb(15 23 42 / 0.03);
+		--code-chip-line: rgb(15 23 42 / 0.14);
+		--tok-c: #64748b;
+		--tok-k: #0369a1;
+		--tok-s: #15803d;
+		--tok-f: #b45309;
+		--tok-ok: #047857;
+		--tok-warn: #a16207;
+		--tok-bad: #b91c1c;
 
 		--glow: 0 0 0 1px rgb(37 99 235 / 0.18), 0 14px 42px -16px rgb(37 99 235 / 0.35);
 	}
@@ -659,7 +719,7 @@ h1 .grad {
 .demo {
 	border: 1px solid var(--line);
 	border-radius: var(--rad);
-	background: #05080f;
+	background: var(--stage);
 	overflow: hidden;
 	box-shadow: 0 40px 90px -50px rgb(0 0 0 / 0.9);
 	position: relative;
@@ -670,11 +730,11 @@ h1 .grad {
 	align-items: center;
 	gap: 0.5rem;
 	padding: 0.55rem 0.85rem;
-	border-bottom: 1px solid var(--line);
-	background: color-mix(in srgb, var(--panel) 60%, transparent);
+	border-bottom: 1px solid var(--stage-line);
+	background: var(--stage-chrome);
 	font-family: var(--mono);
 	font-size: 0.72rem;
-	color: var(--dim);
+	color: var(--on-stage-dim);
 	letter-spacing: 0.04em;
 }
 
@@ -753,10 +813,10 @@ h1 .grad {
 	align-items: center;
 	gap: 0.6rem;
 	padding: 0.7rem 0.85rem;
-	border-top: 1px solid var(--line);
-	background: color-mix(in srgb, var(--panel) 60%, transparent);
+	border-top: 1px solid var(--stage-line);
+	background: var(--stage-chrome);
 	font-size: 0.78rem;
-	color: var(--muted);
+	color: var(--on-stage);
 	flex-wrap: wrap;
 }
 
@@ -765,7 +825,7 @@ h1 .grad {
 	font-size: 0.7rem;
 	letter-spacing: 0.06em;
 	text-transform: uppercase;
-	color: var(--dim);
+	color: var(--on-stage-dim);
 	white-space: nowrap;
 }
 
@@ -773,7 +833,10 @@ h1 .grad {
 	flex: 1 1 8rem;
 	min-width: 6rem;
 	accent-color: var(--cyan);
-	height: 1.2rem;
+	/* 24px, the smallest target WCAG 2.2 accepts for a control that is not an
+	   inline link -- and the difference between dragging this on a phone and
+	   missing it. */
+	height: 1.5rem;
 	cursor: grab;
 }
 
@@ -790,19 +853,8 @@ h1 .grad {
 	position: relative;
 	border: 1px solid var(--line);
 	border-radius: var(--rad);
-	background: color-mix(in srgb, #05080f 88%, var(--panel));
+	background: var(--code-bg);
 	overflow: hidden;
-}
-
-:root[data-theme="light"] .code,
-html[data-theme="light"] .code {
-	background: #0b1220;
-}
-
-@media (prefers-color-scheme: light) {
-	:root:not([data-theme="dark"]) .code {
-		background: #0b1220;
-	}
 }
 
 .code-head {
@@ -810,10 +862,10 @@ html[data-theme="light"] .code {
 	align-items: center;
 	gap: 0.5rem;
 	padding: 0.5rem 0.6rem 0.5rem 0.9rem;
-	border-bottom: 1px solid rgb(255 255 255 / 0.07);
+	border-bottom: 1px solid var(--code-rule);
 	font-family: var(--mono);
 	font-size: 0.72rem;
-	color: #7d8ba3;
+	color: var(--code-dim);
 }
 
 .code-head .grow {
@@ -824,7 +876,7 @@ html[data-theme="light"] .code {
 	margin: 0;
 	padding: 1rem 1.1rem;
 	overflow-x: auto;
-	color: #d6e3f5;
+	color: var(--code-fg);
 	line-height: 1.7;
 	tab-size: 2;
 }
@@ -838,9 +890,9 @@ html[data-theme="light"] .code {
 }
 
 .copy {
-	border: 1px solid rgb(255 255 255 / 0.12);
-	background: rgb(255 255 255 / 0.04);
-	color: #9fb2cc;
+	border: 1px solid var(--code-chip-line);
+	background: var(--code-chip);
+	color: var(--code-dim);
 	font: inherit;
 	font-family: var(--mono);
 	font-size: 0.7rem;
@@ -861,35 +913,35 @@ html[data-theme="light"] .code {
 }
 
 .tok-c {
-	color: #6b7c99;
+	color: var(--tok-c);
 }
 
 /* comment */
 .tok-k {
-	color: #7ee0f2;
+	color: var(--tok-k);
 }
 
 /* command / keyword */
 .tok-s {
-	color: #a8e6a3;
+	color: var(--tok-s);
 }
 
 /* string / path */
 .tok-f {
-	color: #f0c987;
+	color: var(--tok-f);
 }
 
 /* flag */
 .tok-ok {
-	color: #6ee7b7;
+	color: var(--tok-ok);
 }
 
 .tok-warn {
-	color: #fcd34d;
+	color: var(--tok-warn);
 }
 
 .tok-bad {
-	color: #fca5a5;
+	color: var(--tok-bad);
 }
 
 /* ----------------------------------------------------------------- tabs */
@@ -970,19 +1022,19 @@ html[data-theme="light"] .code {
 	font-size: 0.95rem;
 }
 
+/* A ticked circle, drawn as a mask so it takes the theme's accent rather than
+   a colour baked into the data URI. The glyph is deliberately unambiguous:
+   this is a list of what the command covers, and anything resembling a cross
+   reads as a failure that has not happened. */
 .checks li::before {
 	content: "";
-	width: 1.05rem;
-	height: 1.05rem;
-	margin-top: 0.28rem;
+	width: 1.15rem;
+	height: 1.15rem;
+	margin-top: 0.22rem;
 	flex: none;
-	border-radius: 50%;
-	border: 1px solid color-mix(in srgb, var(--cyan) 50%, transparent);
-	background:
-		linear-gradient(var(--cyan), var(--cyan)) center / 0.42rem 1.5px no-repeat,
-		linear-gradient(var(--cyan), var(--cyan)) center / 1.5px 0.42rem no-repeat;
-	background-color: color-mix(in srgb, var(--cyan) 10%, transparent);
-	transform: rotate(45deg);
+	background-color: var(--cyan);
+	-webkit-mask: var(--tick) center / contain no-repeat;
+	mask: var(--tick) center / contain no-repeat;
 }
 
 .checks li b {
@@ -1282,7 +1334,7 @@ td code {
 	overflow: hidden;
 	display: grid;
 	place-items: center;
-	color: #7d8ba3;
+	color: var(--on-stage-dim);
 	font-family: var(--mono);
 	font-size: 0.7rem;
 }

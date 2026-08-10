@@ -21,6 +21,7 @@ import logging
 import signal
 import sys
 import threading
+import time
 from pathlib import Path
 from types import FrameType
 from typing import Any
@@ -49,6 +50,8 @@ def _load_config(args: argparse.Namespace) -> EngineConfig:
         config.camera.index = args.camera
     if args.device:
         config.camera.device = args.device
+    if getattr(args, "backend", None):
+        config.camera.backend = args.backend
     if args.recording_dir:
         config.recording.directory = Path(args.recording_dir).expanduser()
 
@@ -113,12 +116,21 @@ def cmd_run(args: argparse.Namespace) -> int:
     stopping = threading.Event()
 
     def _handle(signum: int, _frame: FrameType | None) -> None:
+        if stopping.is_set():
+            # Said out loud because the natural response to a process that has
+            # not exited yet is to press Ctrl-C again, and the second press does
+            # nothing visible. Finalising the open segment is what the pause is
+            # for; the alternative is the truncated file this exists to prevent.
+            log.info("already shutting down -- finishing the current segment")
+            return
         log.info("received %s, shutting down", signal.Signals(signum).name)
         stopping.set()
 
-    # systemd sends SIGTERM on 'systemctl stop'; a terminal sends SIGINT. Both
-    # must finalise the open segment rather than leave a truncated file.
-    for name in ("SIGINT", "SIGTERM"):
+    # systemd sends SIGTERM on 'systemctl stop'; a terminal sends SIGINT.
+    # SIGBREAK is the Windows-only Ctrl-Break, which otherwise kills the process
+    # outright. All three must finalise the open segment rather than leave a
+    # truncated file.
+    for name in ("SIGINT", "SIGTERM", "SIGBREAK"):
         handler = getattr(signal, name, None)
         if handler is not None:
             signal.signal(handler, _handle)
@@ -133,9 +145,19 @@ def cmd_run(args: argparse.Namespace) -> int:
             server = serve(engine, config, block=False)
             log.info("web interface on http://%s:%d/", config.server.host, config.server.port)
 
-        stopping.wait(timeout=args.duration if args.duration else None)
-        if args.duration:
-            log.info("duration of %.0fs elapsed", args.duration)
+        # Waited in slices rather than one open-ended block. On Windows a
+        # wait with no deadline is not interrupted by Ctrl-C, so a plain
+        # wait() leaves the operator pressing a key at a process that will
+        # only stop when the console kills it -- which truncates the segment
+        # that is being written, the one thing shutdown exists to prevent.
+        deadline = time.monotonic() + args.duration if args.duration else None
+        if deadline is None:
+            log.info("press Ctrl-C to stop -- the segment being written is finished first")
+        while not stopping.is_set():
+            if deadline is not None and time.monotonic() >= deadline:
+                log.info("duration of %.0fs elapsed", args.duration)
+                break
+            stopping.wait(timeout=0.25)
     finally:
         if server is not None:
             server.shutdown()
@@ -174,7 +196,14 @@ def cmd_devices(args: argparse.Namespace) -> int:
         return 1
 
     for device in devices:
-        print(f"{device.label}  {device.width}x{device.height} @ {device.fps:.0f}fps via {device.backend}")
+        state = "" if device.readable else "   (opened but streamed nothing -- another program may hold it)"
+        print(f"{device.label}  {device.width}x{device.height} @ {device.fps:.0f}fps{state}")
+
+    # Said plainly rather than left to be discovered: the number in front of
+    # each row is only meaningful next to the driver beside it.
+    if len({device.backend for device in devices}) > 1:
+        print("\nIndices are per-backend: the same number is a different camera on a different driver.")
+        print("Pin one with --backend, or camera.backend in the config.")
     return 0
 
 
@@ -202,6 +231,13 @@ def cmd_decode(args: argparse.Namespace) -> int:
     image = cv2.imread(str(path))
     if image is None:
         print(f"could not decode an image from {path}", file=sys.stderr)
+        # Reaching for a clip here is the obvious mistake to make, and the
+        # answer is already on disk next to it.
+        if path.suffix.lower() in {".mp4", ".mkv", ".avi"}:
+            print(
+                f"this looks like a clip; its telemetry is in {path.with_suffix('.json').name}",
+                file=sys.stderr,
+            )
         return 1
 
     # Checked here rather than left to strip_metadata, which raises on a strip
@@ -274,16 +310,21 @@ def cmd_config(args: argparse.Namespace) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
+    name = Path(sys.argv[0]).stem or "vectra180"
     parser = argparse.ArgumentParser(
-        prog="vectra180",
+        # Taken from how it was actually invoked, so the usage line matches
+        # what was typed: the package installs both `vectra180` and the
+        # shorter `vectra`, and being told about the other one is no help.
+        prog=name,
         description="Dual-fisheye dashcam and stereoscopic depth engine.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "examples:\n"
-            "  vectra180 doctor                 check the camera, encoder and disk\n"
-            "  vectra180 run                    record and serve until stopped\n"
-            "  vectra180 run --duration 30      record a 30 second test\n"
-            "  vectra180 config > my.toml       capture the current settings\n"
+            f"  {name} devices                 list cameras, per backend\n"
+            f"  {name} doctor                  check the camera, encoder and disk\n"
+            f"  {name} run                     record and serve until stopped\n"
+            f"  {name} run --duration 30       record a 30 second test\n"
+            f"  {name} config > my.toml        capture the current settings\n"
         ),
     )
     parser.add_argument("--version", action="version", version=f"vectra180 {__version__}")
@@ -292,6 +333,11 @@ def build_parser() -> argparse.ArgumentParser:
     common.add_argument("--config", metavar="PATH", help="TOML config file (default: platform config directory)")
     common.add_argument("--camera", type=int, metavar="N", help="camera index override")
     common.add_argument("--device", metavar="PATH", help="explicit device path, e.g. /dev/video0")
+    common.add_argument(
+        "--backend",
+        metavar="NAME",
+        help="pin the capture driver (auto, v4l2, dshow, msmf, avfoundation, gstreamer)",
+    )
     common.add_argument("--recording-dir", metavar="PATH", help="where clips are written")
     common.add_argument("-v", "--verbose", action="count", default=0, help="debug logging")
     common.add_argument("-q", "--quiet", action="store_true", help="warnings and errors only")
@@ -353,6 +399,10 @@ def main(argv: list[str] | None = None) -> int:
         log.error("%s", exc)
         return 1
     except KeyboardInterrupt:
+        # 130 is the shell's convention for "killed by SIGINT". The line is
+        # printed because a bare non-zero exit from a probe that was still
+        # running reads as a crash rather than as the user's own Ctrl-C.
+        print("\ninterrupted", file=sys.stderr)
         return 130
 
 

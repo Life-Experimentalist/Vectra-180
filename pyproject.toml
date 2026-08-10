@@ -24,7 +24,10 @@ keywords = [
     "telemetry",
 ]
 classifiers = [
-    "Development Status :: 5 - Production/Stable",
+    # Beta, not Production/Stable: the code is complete and the suite is green
+    # on three platforms, but nothing has recorded a drive on the CM5 this is
+    # built for. Raise this once it has road miles, not before.
+    "Development Status :: 4 - Beta",
     "Environment :: Console",
     "Intended Audience :: Developers",
     "Intended Audience :: End Users/Desktop",
@@ -58,6 +61,10 @@ Changelog = "https://github.com/Life-Experimentalist/Vectra-180/blob/main/CHANGE
 
 [project.scripts]
 vectra180 = "vectra180.cli:main"
+# A shorter name for the same entry point. `vectra180` stays the canonical one
+# -- it is what the unit file and the docs invoke -- but nobody wants to type
+# the digits at a prompt forty times an evening.
+vectra = "vectra180.cli:main"
 
 [tool.hatch.version]
 path = "src/vectra180/__init__.py"

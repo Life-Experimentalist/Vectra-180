@@ -38,6 +38,11 @@ log = logging.getLogger(__name__)
 #: Sentinel pushed onto the queue to end the writer thread cleanly.
 _STOP = object()
 
+#: How far a clip's playing time may fall short of the stretch of road it
+#: covers before it stops being a real-time record. A little slack is
+#: unavoidable: the segment's clock starts before its first frame arrives.
+_CONTINUITY_TOLERANCE = 1.05
+
 
 @dataclass
 class _QueuedFrame:
@@ -80,6 +85,12 @@ class _Segment:
     writer: FrameWriter
     started_monotonic: float
     started_wall: float
+    #: Monotonic stamp of the most recent frame accepted into this segment.
+    #: With the start stamp it gives the span of road the clip covers, which
+    #: is longer than the clip plays for whenever frames were dropped.
+    last_monotonic: float = 0.0
+    #: Value of the global dropped counter when this segment opened.
+    dropped_at_start: int = 0
     frames: int = 0
     protect: bool = False
     lock_reasons: list[str] = field(default_factory=list)
@@ -238,6 +249,7 @@ class SegmentRecorder:
 
         segment.writer.write(item.image)
         segment.frames += 1
+        segment.last_monotonic = item.monotonic
         self.stats.written_frames += 1
         self.stats.segment_elapsed = item.monotonic - segment.started_monotonic
 
@@ -257,7 +269,13 @@ class SegmentRecorder:
             suffix += 1
 
         writer = create_writer(path, self._size, self._fps, self._config)
-        segment = _Segment(writer=writer, started_monotonic=item.monotonic, started_wall=item.wall_time)
+        segment = _Segment(
+            writer=writer,
+            started_monotonic=item.monotonic,
+            started_wall=item.wall_time,
+            last_monotonic=item.monotonic,
+            dropped_at_start=self.stats.dropped_frames,
+        )
         with self._lock:
             self._segment = segment
         self.stats.current_clip = path.name
@@ -306,10 +324,26 @@ class SegmentRecorder:
     def _write_sidecar(self, path: Path, segment: _Segment, duration: float) -> None:
         if not self._config.write_telemetry_sidecar:
             return
+        # How long the clip plays for, and how long a stretch of road it
+        # actually covers. They are the same number only when nothing was
+        # dropped; when they diverge the footage is not continuous, and an
+        # incident record has to say so rather than let a reviewer assume it.
+        covers = max(duration, segment.last_monotonic - segment.started_monotonic)
+        dropped = max(0, self.stats.dropped_frames - segment.dropped_at_start)
+        # Dropping frames is not the only way to lose time. A camera that
+        # advertises 30fps and delivers 17 costs no drops at all -- every frame
+        # it produced was written -- and still yields a clip that plays half
+        # again too fast. Both faults land on the same pair of numbers, so both
+        # are answered here.
+        real_time = covers <= duration * _CONTINUITY_TOLERANCE
+
         payload = {
             "clip": path.name,
             "started_at": datetime.fromtimestamp(segment.started_wall, tz=UTC).isoformat(),
             "duration_seconds": round(duration, 3),
+            "covers_seconds": round(covers, 3),
+            "dropped_frames": dropped,
+            "continuous": dropped == 0 and real_time,
             "frames": segment.frames,
             "fps": round(self._fps, 3),
             "width": self._size[0],
