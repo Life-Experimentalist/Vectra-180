@@ -177,6 +177,7 @@ The dashcam's primary duty. See [Recording and retention](recording.md).
 | `preset` | `"ultrafast"` | `VECTRA_ENCODER_PRESET` | — |
 | `bitrate_kbps` | `8000` | `VECTRA_BITRATE_KBPS` | > 0 |
 | `scale` | `1.0` | `VECTRA_RECORDING_SCALE` | 0.1 – 1.0 |
+| `fps` | `0.0` | `VECTRA_RECORDING_FPS` | ≥ 0 — `0` follows the camera |
 | `write_telemetry_sidecar` | `true` | — | — |
 | `burn_timestamp` | `true` | `VECTRA_BURN_TIMESTAMP` | — |
 
@@ -200,6 +201,18 @@ encoder; libx264 runs on the Cortex-A76 cores. At 2560×720 only `ultrafast` and
 `superfast` keep up. Anything slower fills the recorder queue and drops frames —
 which will show up as a rising `dropped_frames` in `vectra180 doctor` and on the
 HUD rather than as a crash.
+
+**`fps` is the number written into the clip header**, and it is a separate
+setting from `camera.fps` because that one is only a request. A driver is free
+to open in whatever mode it likes and report that mode back, and the header
+follows the report — so on a machine whose pipeline sustains less than the
+camera delivers, every clip plays back faster than the road went by, and no
+change to `camera.fps` will slow it down. `vectra180 doctor`'s `pipeline` check
+measures the sustained rate and names the figure to put here; the sidecar's
+`continuous` flag is what tells you afterwards whether it was right.
+
+Leave it at `0` whenever the machine keeps up. It changes only the header, never
+the pace at which frames are captured or written.
 
 **`burn_timestamp` writes the time into the pixels**, in local time, in a bar at
 the bottom of the frame. Container metadata does not survive a re-encode, a
@@ -316,8 +329,8 @@ VECTRA_CAPTURE_BACKEND         VECTRA_ENCODER               VECTRA_DEPTH_UNIQUEN
 VECTRA_CAPTURE_FOURCC          VECTRA_ENCODER_PRESET        VECTRA_FOCAL_SCALE
 VECTRA_TELEMETRY_ENABLED       VECTRA_BITRATE_KBPS          VECTRA_SERVER_ENABLED
 VECTRA_METADATA_WIDTH          VECTRA_RECORDING_SCALE       VECTRA_SERVER_HOST
-VECTRA_GYRO_SMOOTHING          VECTRA_BURN_TIMESTAMP        VECTRA_SERVER_PORT
-VECTRA_COMPLEMENTARY_ALPHA                                  VECTRA_SERVER_TOKEN
+VECTRA_GYRO_SMOOTHING          VECTRA_RECORDING_FPS         VECTRA_SERVER_PORT
+VECTRA_COMPLEMENTARY_ALPHA     VECTRA_BURN_TIMESTAMP        VECTRA_SERVER_TOKEN
 VECTRA_YAW_LEAK_SECONDS                                     VECTRA_PREVIEW_QUALITY
 VECTRA_GRAVITY_TOLERANCE_G                                  VECTRA_PREVIEW_FPS
                                                             VECTRA_PREVIEW_WIDTH

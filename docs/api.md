@@ -251,7 +251,10 @@ The four fields worth watching:
 | `storage.free_bytes` | Approaching `min_free_bytes` means pruning is about to run continuously |
 
 `fps` is the smoothed *measured* rate from the frame clock, not the requested
-one. `camera.fps` is what the device reported when it was opened.
+one. `camera.fps` here is the payload field: what the device reported when it was
+opened, which is not necessarily the `camera.fps` that was asked for. Neither is
+the rate written into clip headers when `recording.fps` is set — see
+[Configuration](configuration.md#recording).
 
 `storage` becomes `{"error": "..."}` if the recording volume cannot be read —
 the rest of the status is still returned, because a disk problem is not a reason

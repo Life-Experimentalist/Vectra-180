@@ -15,6 +15,7 @@ clip with two thirds of its frames missing.
 from __future__ import annotations
 
 import copy
+import json
 import logging
 import platform
 import shutil
@@ -508,6 +509,28 @@ def _check_encoder(report: Report, config: EngineConfig, images: list[np.ndarray
         report.add("encoder", OK, detail)
 
 
+def _sidecar_totals(directory: Path) -> tuple[int, float]:
+    """Frames written under ``directory``, and the wall time they cover.
+
+    A count taken against a stopwatch is wrong in whichever direction the queue
+    between capture and encode happened to be moving: short while it fills,
+    long once the shutdown drain flushes two seconds of frames into a window
+    that has already closed. The sidecar counts frames against the span of
+    their own capture timestamps, where the queue depth cancels out -- and it
+    is the same figure the operator will later read off their own clips.
+    """
+    frames = 0
+    covered = 0.0
+    for sidecar in sorted(directory.rglob("*.json")):
+        try:
+            payload = json.loads(sidecar.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        frames += int(payload.get("frames", 0))
+        covered += float(payload.get("covers_seconds", 0.0))
+    return frames, covered
+
+
 def _check_pipeline(report: Report, config: EngineConfig) -> None:
     """Measure capture, prepare and encode running at the same time.
 
@@ -528,28 +551,39 @@ def _check_pipeline(report: Report, config: EngineConfig) -> None:
     # Nothing may watch the preview during the benchmark: a viewer would be
     # measured as part of the pipeline and make it look slower than it is.
     probe.server.enabled = False
+    # The benchmark reads its answer back out of the sidecar, so it needs one
+    # written, and it needs the whole window to land in a single clip whatever
+    # segment length the operator happens to have configured.
+    probe.recording.write_telemetry_sidecar = True
+    probe.recording.segment_seconds = int(_PIPELINE_SECONDS * 4)
     engine = Engine(probe)
+    written = 0
+    covered = 0.0
     try:
         engine.start()
         engine.begin_recording()
-        started = time.monotonic()
-        before = engine.recorder.stats.written_frames
         time.sleep(_PIPELINE_SECONDS)
-        elapsed = time.monotonic() - started
     except (CaptureError, RecorderError) as exc:
         report.add("pipeline", FAIL, f"end-to-end recording failed: {exc}")
         return
     finally:
-        # Stopping drains the queue, which is why the counters are read after
-        # it rather than before. Up to two seconds of frames sit in that queue
-        # at any moment -- neither written nor dropped -- and on a five-second
-        # window that is a third of them.
+        # Stopping finalises the open clip and writes its sidecar, which is why
+        # the numbers are read after the shutdown rather than before it.
         engine.stop()
+        written, covered = _sidecar_totals(workspace)
         shutil.rmtree(workspace, ignore_errors=True)
 
-    written = engine.recorder.stats.written_frames - before
     dropped = engine.recorder.stats.dropped_frames
-    rate = written / elapsed if elapsed > 0 else 0.0
+    if written == 0 or covered <= 0:
+        report.add(
+            "pipeline",
+            FAIL,
+            "recording ran but no frames reached the card",
+            "check the 'camera' and 'ffmpeg' results above -- the capture or the encoder failed silently",
+        )
+        return
+
+    rate = written / covered
     detail = f"{rate:.1f} fps captured, prepared and encoded together ({config.camera.fps} requested)"
     if dropped:
         detail += f", {dropped} frame(s) dropped"
@@ -558,15 +592,17 @@ def _check_pipeline(report: Report, config: EngineConfig) -> None:
         report.add("pipeline", OK, detail)
         return
 
-    # Falling short is not just lost detail. The clip declares the requested
-    # rate in its header, so footage arriving slower than that plays faster
-    # than the road went by -- which is why the sidecar marks these clips
-    # discontinuous. Matching camera.fps to what the machine sustains fixes the
-    # playback speed; lowering the scale is what actually buys the rate back.
+    # Falling short is not just lost detail. The clip declares a frame rate in
+    # its header, so footage arriving slower than that plays faster than the
+    # road went by -- which is why the sidecar marks these clips discontinuous.
+    # recording.fps fixes the playback speed; lowering the scale is what
+    # actually buys the rate back. camera.fps is deliberately not named here:
+    # it is only a request, and a driver that reports the mode it opened in
+    # puts its own figure in the header regardless of what was asked for.
     remedy = (
         f"the whole pipeline is slower than the camera alone, so clips play faster than real time "
         f"and their sidecars are marked discontinuous. Lower recording.scale to encode fewer pixels, "
-        f"or set camera.fps to about {max(1, int(rate))} so the header matches what is recorded"
+        f"or set recording.fps to about {rate:.0f} so the clip header matches what is recorded"
     )
     report.add("pipeline", WARN if rate >= config.camera.fps * 0.5 else FAIL, detail, remedy)
 

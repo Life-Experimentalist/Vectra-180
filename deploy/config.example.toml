@@ -166,6 +166,18 @@ bitrate_kbps = 8000
 # second number is the one that decides what reaches the card.
 scale = 1.0
 
+# Frame rate written into each clip's header. 0 follows what the camera reported,
+# which is right whenever this machine keeps up with it.
+#
+# Set it when `vectra180 doctor` reports that the pipeline sustains less than the
+# camera delivers: the header would still claim the camera's rate, so every clip
+# plays back faster than the road went by and its sidecar is marked
+# discontinuous. Use the figure doctor names. This is a separate setting from
+# `camera.fps` because that one is only a request -- a UVC driver is free to open
+# in whichever mode it prefers and report that back, and the header follows the
+# report. It changes only the header; nothing is captured or written differently.
+fps = 0
+
 # Write a JSON sidecar of IMU samples beside each clip. This is where the
 # telemetry survives -- the video pixels do not carry it once the metadata
 # strip is cropped.

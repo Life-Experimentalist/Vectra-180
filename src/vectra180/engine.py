@@ -11,9 +11,16 @@ Everything expensive is pulled *out* of this loop:
   watching -- and so is the panoramic dewarp, when one asks for it.
 * Depth is computed on request, never per frame.
 
-That ordering is what "recording-first" means here: a viewer, a depth request
-or a slow SD card can cost you a preview frame or a disparity map, but it
-cannot cost you recorded footage.
+That ordering is what "recording-first" means here. Nothing optional shares a
+thread with the camera read or the encode, so a viewer, a depth request or a
+slow SD card cannot *block* either one: what they cost first is a preview frame
+or a disparity map.
+
+What the structure cannot do is invent cores. Depth and JPEG encoding compete
+with the encoder for CPU, and on a machine already at its limit that contention
+shows up where every other shortfall does -- ``dropped_frames``, and a sustained
+rate below what the camera delivers. ``vectra180 doctor`` measures that rate with
+nobody watching, which is the number to size the machine against.
 """
 
 from __future__ import annotations
@@ -49,8 +56,14 @@ __all__ = ["Engine", "EngineSnapshot"]
 
 log = logging.getLogger(__name__)
 
-#: Weight of the running frame-rate average. High enough that the reported
+#: Weight of the running frame-interval average. High enough that the reported
 #: rate is steady, low enough that a real stall shows within a second.
+#:
+#: The average is taken over the interval and then inverted, not over the
+#: instantaneous rate. A mean of reciprocals sits above the reciprocal of the
+#: mean, so averaging rates on a camera that alternates fast and slow frames --
+#: which is exactly what one that cannot keep up looks like -- reports a rate
+#: the camera never reached, on the status page and in the HUD.
 _FPS_SMOOTHING = 0.9
 
 #: A dt outside this range means the clock jumped or the loop stalled; the
@@ -91,6 +104,7 @@ class Engine:
         self._stop = threading.Event()
         self._started_at = 0.0
         self._fps = 0.0
+        self._interval = 0.0
         self._last_monotonic: float | None = None
         self._last_incident: Incident | None = None
         self._error: str = ""
@@ -162,8 +176,8 @@ class Engine:
         dt = 0.0 if self._last_monotonic is None else frame.monotonic - self._last_monotonic
         self._last_monotonic = frame.monotonic
         if _MIN_DT <= dt <= _MAX_DT:
-            instant = 1.0 / dt
-            self._fps = _FPS_SMOOTHING * self._fps + (1.0 - _FPS_SMOOTHING) * instant if self._fps else instant
+            self._interval = _FPS_SMOOTHING * self._interval + (1.0 - _FPS_SMOOTHING) * dt if self._interval else dt
+            self._fps = 1.0 / self._interval
             orientation = self.orientation_filter.update(sample, dt)
         else:
             orientation = self.orientation_filter.orientation
@@ -227,7 +241,12 @@ class Engine:
             raise CaptureError("no frames arrived within 10s; cannot start recording")
         prepared = self._prepare_for_recording(snapshot.image, snapshot.wall_time)
         height, width = prepared.shape[:2]
-        self.recorder.start((width, height), self.source.fps, prepare=self._prepare_for_recording)
+        # The header rate is the operator's if they set one. A driver reports
+        # the mode it opened in, not the rate this machine can encode at, so on
+        # a pipeline that falls short the camera's own figure makes every clip
+        # play faster than the road went by.
+        header_fps = self.config.recording.fps or self.source.fps
+        self.recorder.start((width, height), header_fps, prepare=self._prepare_for_recording)
 
     # -- consumers ---------------------------------------------------------
 

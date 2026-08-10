@@ -28,6 +28,10 @@ below is the shape of that release rather than a history of how it got there.
 - `recording.scale` shrinks each frame before encoding, for modules that offer a
   single mode larger than the encoder can carry. Preview, depth and the HUD keep
   working from the full frame.
+- `recording.fps` writes the clip header directly, for machines that sustain less
+  than the camera delivers and would otherwise produce clips that play back
+  faster than the road went by. It defaults to following the camera, and
+  `vectra180 doctor` measures the figure to put there.
 
 ### Telemetry
 

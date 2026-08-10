@@ -108,7 +108,7 @@
 						"name": "Does the depth map slow down recording?",
 						"acceptedAnswer": {
 							"@type": "Answer",
-							"text": "No. Depth is computed on an HTTP handler thread, only when a request asks for one, never per frame. Recording runs on its own thread behind a bounded queue. A depth request can cost you a preview frame; it cannot cost you recorded footage."
+							"text": "Not on a machine with headroom. Depth is computed on an HTTP handler thread, only when a request asks for one, never per frame, and recording runs on its own thread behind a bounded queue — so a depth request cannot block a camera read or an encode, and what it costs first is a preview frame. It does still compete for CPU, so on a machine already at its limit the contention shows up as dropped frames like any other shortfall. Run vectra180 doctor: it measures the sustained rate with nobody watching, which is the number to size the machine against."
 						}
 					},
 					{
@@ -1234,9 +1234,13 @@ token = <span class="tok-s">""</span>           <span class="tok-c"># and everyo
 					<details>
 						<summary>Does the depth map slow down recording?</summary>
 						<p>
-							No. Depth is computed on an HTTP handler thread, only when a request asks for one, never
-							per frame. Recording runs on its own thread behind a bounded queue. A depth request can
-							cost you a preview frame; it cannot cost you recorded footage.
+							Not on a machine with headroom. Depth is computed on an HTTP handler thread, only when
+							a request asks for one, never per frame, and recording runs on its own thread behind a
+							bounded queue — so a depth request cannot block a camera read or an encode, and what it
+							costs first is a preview frame. It does still compete for CPU, so on a machine already at
+							its limit the contention shows up as dropped frames like any other shortfall. Run
+							<code>vectra180 doctor</code>: it measures the sustained rate with nobody watching, which
+							is the number to size the machine against.
 						</p>
 					</details>
 					<details>

@@ -281,6 +281,16 @@ class RecordingConfig:
     #: the pixels, and the recording keeps running instead of dropping frames.
     #: Preview, depth and the HUD are unaffected; they see the full frame.
     scale: float = 1.0
+    #: Frame rate written into the clip header. ``0`` follows the camera, which
+    #: is right whenever the machine keeps up with it.
+    #:
+    #: It is a separate setting from ``camera.fps`` because that one is only a
+    #: request: a driver is free to report whatever mode it opened in, and the
+    #: header follows that report. When the pipeline sustains less than the
+    #: camera delivers -- which ``vectra180 doctor`` measures and names -- every
+    #: clip plays back faster than the road went by, and no change to
+    #: ``camera.fps`` fixes it. Setting this to the sustained rate does.
+    fps: float = 0.0
     #: Write a JSON sidecar of IMU samples alongside each segment.
     write_telemetry_sidecar: bool = True
     #: Burn the wall-clock time into the recorded pixels. Container metadata
@@ -302,6 +312,7 @@ class RecordingConfig:
         self.preset = _env_str("VECTRA_ENCODER_PRESET", self.preset)
         self.bitrate_kbps = _env_int("VECTRA_BITRATE_KBPS", self.bitrate_kbps)
         self.scale = _env_float("VECTRA_RECORDING_SCALE", self.scale)
+        self.fps = _env_float("VECTRA_RECORDING_FPS", self.fps)
 
     def validate(self) -> None:
         if self.segment_seconds < 5:
@@ -320,6 +331,8 @@ class RecordingConfig:
         # which is the opposite of what this setting is for.
         if not 0.1 <= self.scale <= 1.0:
             raise ValueError("recording.scale must be between 0.1 and 1.0")
+        if self.fps < 0:
+            raise ValueError("recording.fps must be >= 0 (0 follows the camera)")
 
     @property
     def normal_dir(self) -> Path:

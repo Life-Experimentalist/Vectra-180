@@ -30,9 +30,12 @@ Everything in the codebase follows from these, and reading them first makes the
 rest obvious.
 
 **Recording is the duty.** Preview, depth, the panorama and the web UI are
-optional; footage is not. Anything expensive is pushed off the capture thread,
-so a viewer, a slow card or a depth request can cost you a preview frame — never
-a recorded one.
+optional; footage is not. Anything expensive is pushed off the capture thread, so
+none of it can block a camera read or an encode — what a viewer, a slow card or a
+depth request costs first is a preview frame. It cannot invent cores, though: on
+a machine already at its limit they compete for CPU like anything else. Size
+yours with `vectra180 doctor`, which measures the sustained rate with nobody
+watching.
 
 **The frame carries the clock.** Every frame arrives stamped with both a
 monotonic time and a wall time. Pacing and segment length use the monotonic

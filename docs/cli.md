@@ -178,16 +178,28 @@ comfortable numbers do not add up to a comfortable pipeline — the stages share
 cores, memory bandwidth and one interpreter lock. So this check records for five
 seconds through the real engine and counts what reached the file.
 
+The rate it prints is the clip's own frame count over the span those frames
+cover, read back out of the sidecar — the same arithmetic behind the
+`continuous` flag, and a number you can check for yourself against your own
+footage afterwards. Counting frames against a stopwatch instead would be wrong
+in whichever direction the queue between capture and encode happened to be
+moving: short while it fills, long once the shutdown drain flushes two seconds
+of frames into a window that has already closed.
+
 It is skipped, and reported as such, when `recording.enabled` is `false`. The
 clips it writes go to a temporary directory that is deleted afterwards, and the
 web service is held down for the duration so a viewer is not measured as part of
 the pipeline.
 
-**A shortfall here is not only lost detail.** The clip declares `camera.fps` in
+**A shortfall here is not only lost detail.** Every clip declares a frame rate in
 its header, so footage arriving slower than that plays back faster than the road
 went by — which is why the sidecar marks such clips discontinuous. Lowering
-`recording.scale` buys the rate back; setting `camera.fps` to what the machine
-actually sustains fixes the playback speed.
+`recording.scale` buys the rate back; setting `recording.fps` to what the machine
+actually sustains fixes the playback speed. Note which setting that is:
+`camera.fps` is only a request, and a driver is free to open in whatever mode it
+likes and report that mode back — the header follows the report, so on the
+hardware that provokes this warning, changing `camera.fps` need not move the
+header at all.
 
 **The encoder check still matters on a CM5.** There is no hardware H.264 block,
 so libx264 runs on the Cortex-A76 cores and 2560×720 at 30 fps is genuinely close

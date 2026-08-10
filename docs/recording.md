@@ -92,8 +92,11 @@ ride out the jitter and then exhaust memory on a sustained stall, and a dashcam
 that runs out of memory records nothing at all.
 
 A rising `dropped_frames` means the encoder cannot keep up. Lower
-`camera.fps`, lower `camera.width`, or confirm `recording.preset` is
-`ultrafast`. It is visible in `/api/status`, on the HUD and in `vectra180 doctor`.
+`recording.scale` — encoder cost tracks pixel count, and this is the one lever
+that always applies — or confirm `recording.preset` is `ultrafast`. Lowering
+`camera.fps` helps only if the driver honours the request; many UVC modules open
+in whichever mode they prefer regardless. It is visible in `/api/status`, on the
+HUD and in `vectra180 doctor`.
 
 ## Encoders
 

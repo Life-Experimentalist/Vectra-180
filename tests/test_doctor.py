@@ -22,6 +22,7 @@ import json
 import threading
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, NoReturn
 
 import numpy as np
@@ -54,6 +55,7 @@ from vectra180.doctor import (
     _check_server,
     _check_storage,
     _check_telemetry,
+    _sidecar_totals,
     run_diagnostics,
 )
 from vectra180.errors import CaptureError, RecorderError
@@ -86,8 +88,7 @@ class Clock:
         """Pass the benchmark window without spending it.
 
         ``_check_pipeline`` records for five real seconds. A suite cannot afford
-        that per test, so the wait is skipped and only the clock moves -- which
-        makes the window it measures exactly ``seconds`` when ``step`` is zero.
+        that per test, so the wait is skipped and only the clock moves.
         """
         self._now += seconds
 
@@ -127,30 +128,9 @@ class BenchWriter:
         self.closed += 1
 
 
-class PipelineStats:
-    """The recorder counters the end-to-end benchmark samples.
-
-    ``written_frames`` is read once before the window opens and once after it
-    closes, so the first reading is the starting count and every later one is
-    the finishing count.
-    """
-
-    def __init__(self, written: int, dropped: int) -> None:
-        self._written = written
-        self._sampled = False
-        self.dropped_frames = dropped
-
-    @property
-    def written_frames(self) -> int:
-        if not self._sampled:
-            self._sampled = True
-            return 0
-        return self._written
-
-
 class PipelineRecorder:
-    def __init__(self, stats: PipelineStats) -> None:
-        self.stats = stats
+    def __init__(self, dropped: int) -> None:
+        self.stats = SimpleNamespace(dropped_frames=dropped)
 
 
 class PipelineEngine:
@@ -159,12 +139,25 @@ class PipelineEngine:
     Only the four calls the check makes are implemented, plus the record of
     which config it was handed -- the check is supposed to redirect the clips
     somewhere disposable rather than into the user's own recordings.
+
+    Stopping writes the sidecar, because that is when the real engine finalises
+    the open clip, and the sidecar is where the benchmark reads its answer.
     """
 
-    def __init__(self, config: EngineConfig, *, written: int, dropped: int, error: Exception | None) -> None:
+    def __init__(
+        self,
+        config: EngineConfig,
+        *,
+        written: int,
+        covers: float,
+        dropped: int,
+        error: Exception | None,
+    ) -> None:
         self.config = config
-        self.recorder = PipelineRecorder(PipelineStats(written, dropped))
+        self.recorder = PipelineRecorder(dropped)
         self.stopped = 0
+        self.written = written
+        self.covers = covers
         self._error = error
 
     def start(self) -> None:
@@ -176,6 +169,13 @@ class PipelineEngine:
 
     def stop(self) -> None:
         self.stopped += 1
+        if self._error is not None:
+            return
+        directory = self.config.recording.normal_dir
+        directory.mkdir(parents=True, exist_ok=True)
+        (directory / "VEC_20260101_000000.json").write_text(
+            json.dumps({"frames": self.written, "covers_seconds": self.covers}), encoding="utf-8"
+        )
 
 
 def device(index: int = 0, name: str = "USB 3.0 Camera") -> DeviceInfo:
@@ -249,9 +249,15 @@ def engines(monkeypatch: pytest.MonkeyPatch) -> Any:
     """
     created: list[PipelineEngine] = []
 
-    def install(*, written: int = 1000, dropped: int = 0, error: Exception | None = None) -> list[PipelineEngine]:
+    def install(
+        *,
+        written: int = 1000,
+        covers: float = 5.0,
+        dropped: int = 0,
+        error: Exception | None = None,
+    ) -> list[PipelineEngine]:
         def factory(config: EngineConfig) -> PipelineEngine:
-            engine = PipelineEngine(config, written=written, dropped=dropped, error=error)
+            engine = PipelineEngine(config, written=written, covers=covers, dropped=dropped, error=error)
             created.append(engine)
             return engine
 
@@ -1021,8 +1027,9 @@ def test_the_benchmark_cycles_distinct_frames(
 # pipeline
 # --------------------------------------------------------------------------
 #
-# The window is five seconds of ``Clock.sleep``; a zero step means nothing else
-# moves the clock, so the frame count a test hands back divides by exactly five.
+# The rate comes out of the sidecar rather than off a stopwatch, so each test
+# hands back a frame count and the span those frames cover; ``covers`` defaults
+# to five seconds, which makes ``written`` divide by exactly five.
 
 
 def test_the_pipeline_check_measures_capture_and_encode_together(
@@ -1039,6 +1046,66 @@ def test_the_pipeline_check_measures_capture_and_encode_together(
     assert check.detail == "30.0 fps captured, prepared and encoded together (30 requested)"
 
 
+def test_a_damaged_sidecar_is_skipped_rather_than_fatal(tmp_path: Path) -> None:
+    """A truncated sidecar is what a power cut mid-write leaves behind.
+
+    The benchmark reads whatever sidecars it finds, and one unreadable file must
+    not turn a diagnostic into a traceback -- least of all on the machine whose
+    power the operator is already suspicious of.
+    """
+    (tmp_path / "good.json").write_text(json.dumps({"frames": 60, "covers_seconds": 2.0}), encoding="utf-8")
+    (tmp_path / "truncated.json").write_text('{"frames": 60, "covers_se', encoding="utf-8")
+
+    assert _sidecar_totals(tmp_path) == (60, 2.0)
+
+
+def test_sidecar_totals_add_up_across_a_rollover(tmp_path: Path) -> None:
+    """A benchmark long enough to roll a segment still measures one rate."""
+    (tmp_path / "a.json").write_text(json.dumps({"frames": 60, "covers_seconds": 2.0}), encoding="utf-8")
+    (tmp_path / "b.json").write_text(json.dumps({"frames": 30, "covers_seconds": 1.0}), encoding="utf-8")
+
+    assert _sidecar_totals(tmp_path) == (90, 3.0)
+
+
+def test_the_rate_is_measured_against_the_frames_not_the_stopwatch(
+    report: Report, config: EngineConfig, engines: Any, clock: Any
+) -> None:
+    """The queue between capture and encode must not be able to skew the answer.
+
+    Two seconds of frames sit in that queue, so a count divided by the length of
+    the sleep is short while the queue fills and long once the shutdown drain
+    flushes it into a window that has already closed -- on a five-second
+    benchmark, wrong by a third either way. Here the clip covers twice the
+    window: if the sleep were the denominator the check would read 30 fps and
+    pass, and it must read 15 and warn instead.
+    """
+    clock(0.0)
+    engines(written=150, covers=doctor_module._PIPELINE_SECONDS * 2)
+
+    _check_pipeline(report, config)
+
+    check = named(report, "pipeline")
+    assert check.status == WARN
+    assert "15.0 fps" in check.detail
+
+
+def test_a_pipeline_that_records_nothing_fails(report: Report, config: EngineConfig, engines: Any, clock: Any) -> None:
+    """An engine that starts, runs and writes no clip is a failure, not 0 fps.
+
+    Dividing by a span of zero would be the other way to answer this, and
+    reporting '0.0 fps, set camera.fps to about 0' would be useless advice.
+    """
+    clock(0.0)
+    engines(written=0, covers=0.0)
+
+    _check_pipeline(report, config)
+
+    check = named(report, "pipeline")
+    assert check.status == FAIL
+    assert "no frames reached the card" in check.detail
+    assert "failed silently" in check.remedy
+
+
 def test_a_pipeline_slower_than_the_camera_warns(
     report: Report, config: EngineConfig, engines: Any, clock: Any
 ) -> None:
@@ -1052,7 +1119,11 @@ def test_a_pipeline_slower_than_the_camera_warns(
     assert check.status == WARN
     assert "20.0 fps" in check.detail
     assert "clips play faster than real time" in check.remedy
-    assert "camera.fps to about 20" in check.remedy
+    # recording.fps, not camera.fps: the latter is only a request, and a driver
+    # that reports the mode it opened in puts its own figure in the header
+    # whatever was asked for -- so naming it here would be advice that does not
+    # work on the very hardware that provokes the warning.
+    assert "recording.fps to about 20" in check.remedy
 
 
 def test_a_pipeline_at_half_the_rate_fails(report: Report, config: EngineConfig, engines: Any, clock: Any) -> None:

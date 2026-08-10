@@ -143,9 +143,12 @@ class ExhaustedSource(FakeCameraSource):
 class FakeWriter:
     """Stands in for the encoder, keeping whatever it was asked to write."""
 
-    def __init__(self, path: Path) -> None:
+    def __init__(self, path: Path, fps: float = 0.0) -> None:
         self._path = path
         self.frames: list[np.ndarray] = []
+        #: The rate that goes into the clip header, which is what decides
+        #: whether the footage plays back at the speed it was filmed.
+        self.fps = fps
         path.parent.mkdir(parents=True, exist_ok=True)
         path.touch()
 
@@ -165,8 +168,8 @@ def writers(monkeypatch: pytest.MonkeyPatch) -> list[FakeWriter]:
     """Replace the encoder factory; collect every writer the recorder opens."""
     created: list[FakeWriter] = []
 
-    def factory(path: Path, _size: tuple[int, int], _fps: float, _config: RecordingConfig) -> FakeWriter:
-        writer = FakeWriter(path)
+    def factory(path: Path, _size: tuple[int, int], fps: float, _config: RecordingConfig) -> FakeWriter:
+        writer = FakeWriter(path, fps)
         created.append(writer)
         return writer
 
@@ -351,6 +354,26 @@ def test_a_steady_stream_reports_its_true_frame_rate(engine: Engine) -> None:
     assert snapshot.fps == pytest.approx(30.0)
 
 
+def test_a_jittery_camera_is_not_reported_faster_than_it_runs(engine: Engine) -> None:
+    """Alternating fast and slow frames must average to the rate, not above it.
+
+    A camera that cannot keep up does not slow down evenly -- it delivers a
+    frame promptly, then makes the next one wait. Averaging the instantaneous
+    rate of each interval averages reciprocals, and the mean of reciprocals sits
+    above the reciprocal of the mean, so the status page and the HUD both report
+    a rate the camera never reached. Here twenty and seventy-five milliseconds
+    alternate: a true 21 fps that the old average called 32.
+    """
+    at = START
+    for index in range(60):
+        at += 0.020 if index % 2 else 0.075
+        engine._process(frame_at(index, monotonic=at))
+
+    snapshot = engine.snapshot()
+    assert snapshot is not None
+    assert snapshot.fps == pytest.approx(2.0 / 0.095, rel=0.05)
+
+
 def test_a_clock_jump_does_not_reach_the_frame_rate(engine: Engine) -> None:
     feed(engine, 5)
     engine._process(frame_at(5, monotonic=START + 60.0))
@@ -465,6 +488,39 @@ def test_the_recording_scale_shrinks_the_clip_but_not_the_preview(engine: Engine
     assert (height, width) == (FRAME_HEIGHT // 2, (FRAME_WIDTH - METADATA_WIDTH) // 2)
     assert snapshot is not None
     assert snapshot.image.shape[:2] == (FRAME_HEIGHT, FRAME_WIDTH - METADATA_WIDTH)
+
+
+def test_the_clip_header_follows_the_camera_by_default(
+    engine: Engine, source: FakeCameraSource, writers: list[FakeWriter]
+) -> None:
+    """With nothing configured, the header is the rate the driver reported."""
+    feed(engine, 1)
+    engine.begin_recording()
+    engine._process(frame_at(1))
+    wait_until(lambda: bool(writers))
+
+    assert writers[0].fps == pytest.approx(source.fps)
+
+
+def test_the_clip_header_can_be_set_to_what_the_machine_sustains(
+    engine: Engine, source: FakeCameraSource, writers: list[FakeWriter]
+) -> None:
+    """``camera.fps`` cannot do this job, which is why there is a second setting.
+
+    That one is a request. A driver is free to open in whatever mode it likes
+    and report that mode back, and the header follows the report -- so on a
+    machine whose pipeline sustains less than the camera delivers, every clip
+    plays faster than the road went by and no change to ``camera.fps`` will
+    slow it down.
+    """
+    engine.config.recording.fps = 21.0
+    feed(engine, 1)
+    engine.begin_recording()
+    engine._process(frame_at(1))
+    wait_until(lambda: bool(writers))
+
+    assert source.fps != pytest.approx(21.0)
+    assert writers[0].fps == pytest.approx(21.0)
 
 
 def test_beginning_recording_twice_is_a_no_op(recording: Engine) -> None:

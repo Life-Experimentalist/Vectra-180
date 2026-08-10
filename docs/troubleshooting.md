@@ -329,14 +329,15 @@ Background load matters too — a system update running mid-drive is enough.
 [warn] pipeline: 19.4 fps captured, prepared and encoded together (30 requested)
          -> the whole pipeline is slower than the camera alone, so clips play faster
             than real time and their sidecars are marked discontinuous. Lower
-            recording.scale to encode fewer pixels, or set camera.fps to about 19 so
-            the header matches what is recorded
+            recording.scale to encode fewer pixels, or set recording.fps to about 19
+            so the clip header matches what is recorded
 ```
 
-A clip's header declares `camera.fps`. If the machine only sustains 19 of those
-30 frames, the file still says 30, so a minute of road plays back in thirty-eight
-seconds — and the sidecar's `continuous` flag is `false` because `covers_seconds`
-does not match `duration_seconds`.
+Every clip declares a frame rate in its header, and by default that is the rate
+the driver reported when the camera was opened. If the machine only sustains 19
+of those 30 frames, the file still says 30, so a minute of road plays back in
+thirty-eight seconds — and the sidecar's `continuous` flag is `false` because
+`covers_seconds` does not match `duration_seconds`.
 
 This can happen while the `camera` and `encoder` checks are both green. Those
 time one stage each with nothing else running; the `pipeline` check is the one
@@ -347,10 +348,25 @@ Two different fixes, and they do different things:
 | Change | Effect |
 |---|---|
 | `recording.scale` down | Encodes fewer pixels, so the rate actually comes back up |
-| `camera.fps` down to the measured rate | Rate is unchanged, but the header now matches, so playback speed is correct |
+| `recording.fps` set to the measured rate | Rate is unchanged, but the header now matches, so playback speed is correct |
 
 Do both: lower the scale until `pipeline` reports close to the rate you want, then
-leave `camera.fps` at that rate.
+set `recording.fps` to that rate.
+
+**Use `recording.fps`, not `camera.fps`, for the second one.** `camera.fps` is a
+request made of the driver, and a UVC device is free to open in whichever mode it
+prefers and report that mode back; the header follows the report. On such a camera
+— which is most of the cheap dual-fisheye modules — asking for 24 changes nothing
+and the clips still play fast. `recording.fps` writes the header directly:
+
+```toml
+[recording]
+scale = 0.75
+fps = 19  # 0, the default, follows whatever the camera reports
+```
+
+It changes only the number in the header. Frames are still captured and written
+as fast as the machine manages, so nothing is thrown away by setting it.
 
 ---
 
@@ -592,9 +608,11 @@ reconnect attempts. `/api/status` → `camera.open` tells you which.
 ### The preview stutters, or stalls when I open the depth map
 
 Depth is expensive — two dewarps and a semi-global block match — and it runs on
-an HTTP handler thread, per request. That is by design: it must never cost a
-recorded frame. Lower `depth.working_width` if you want it snappier, and do not
-poll `/depth.jpg` in a loop.
+an HTTP handler thread, per request. That is by design: it keeps the work off the
+capture thread, where it could delay a read. It cannot keep it off the CPU,
+so on a machine with no headroom a depth request can still push `dropped_frames`
+up. Lower `depth.working_width` if you want it snappier, and do not poll
+`/depth.jpg` in a loop.
 
 Several viewers at once each cost a JPEG encode. `server.preview_fps` (default
 10) bounds that; lower it if phones are competing.
