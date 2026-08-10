@@ -100,7 +100,7 @@
 						"name": "Which camera does it need?",
 						"acceptedAnswer": {
 							"@type": "Answer",
-							"text": "A dual-fisheye USB (UVC) camera that delivers both views side by side in a single frame. Vectra-180 splits that frame down the middle. A single-lens webcam records fine, but the panorama and the depth map both need two lenses."
+							"text": "A dual-fisheye USB (UVC) camera that delivers both views side by side in a single frame — Vectra-180 splits that frame down the middle. A single-lens webcam records perfectly well, but the panorama and the depth map both need two lenses. If your camera works, or doesn't, please file a hardware report so the next person knows what to buy."
 						}
 					},
 					{
@@ -116,7 +116,7 @@
 						"name": "What happens when the SD card fills up?",
 						"acceptedAnswer": {
 							"@type": "Answer",
-							"text": "Loop footage is pruned oldest-first against two limits: a total size budget and a free-space floor. Clips locked by an incident live in a separate directory with its own budget that the loop pruner never touches. Only files matching Vectra-180's own naming pattern are ever deleted."
+							"text": "Loop footage is pruned oldest-first against two limits at once: a total size budget and a free-space floor. Clips locked by an incident live in a separate directory with its own budget that the loop pruner never touches. Only files matching Vectra-180's own naming pattern are ever considered for deletion, so anything else on the same card is safe."
 						}
 					},
 					{
@@ -124,7 +124,7 @@
 						"name": "Does my camera actually contain an IMU?",
 						"acceptedAnswer": {
 							"@type": "Answer",
-							"text": "Some dual-fisheye modules embed a 20-byte accelerometer and gyroscope block in a narrow metadata strip on the left of each frame, and some do not. Run 'vectra180 doctor' to find out. Without one you lose automatic incident detection; recording, preview, panorama, depth and the web interface all work exactly the same."
+							"text": "Some dual-fisheye modules embed a 20-byte accelerometer and gyroscope block in the metadata strip, and some do not. vectra180 doctor will tell you, and vectra180 decode will let you inspect a captured frame byte by byte. Without one you lose automatic incident detection — the manual lock button, recording, preview, panorama, depth and the web interface all work exactly the same."
 						}
 					},
 					{
@@ -132,7 +132,23 @@
 						"name": "Is it safe to expose the web interface?",
 						"acceptedAnswer": {
 							"@type": "Answer",
-							"text": "It binds to 127.0.0.1 by default. Binding to a network address requires setting an auth token as well — 'vectra180 doctor' fails, not warns, if the service is public without one, because otherwise anyone on the network could download and delete your footage."
+							"text": "It binds to 127.0.0.1 by default. Binding to a network address requires setting an auth token as well: doctor fails, rather than warns, if the service is public without one — otherwise anyone on the network could download and delete your footage. Treat it as a device on your own Wi-Fi, not something to put on the open internet."
+						}
+					},
+					{
+						"@type": "Question",
+						"name": "Is a dashcam recording legal where I live?",
+						"acceptedAnswer": {
+							"@type": "Answer",
+							"text": "That depends entirely on where you are, and this project cannot answer it for you. Rules on dashcams, on recording audio, and on what you may do with footage of other people vary by country and sometimes by state. Check your local law before mounting anything."
+						}
+					},
+					{
+						"@type": "Question",
+						"name": "How do I contribute?",
+						"acceptedAnswer": {
+							"@type": "Answer",
+							"text": "Read CONTRIBUTING.md, then run make gate — lint, type-check and the full suite, exactly what CI runs. The tests need no camera and no display."
 						}
 					}
 				]
@@ -1244,7 +1260,7 @@ token = <span class="tok-s">""</span>           <span class="tok-c"># and everyo
 						</p>
 					</details>
 					<details>
-						<summary>What happens when the card fills up?</summary>
+						<summary>What happens when the SD card fills up?</summary>
 						<p>
 							Loop footage is pruned oldest-first against two limits at once: a total size budget and a
 							free-space floor. Clips locked by an incident live in a separate directory with its own
