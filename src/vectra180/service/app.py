@@ -35,6 +35,7 @@ import logging
 import mimetypes
 import re
 import socket
+import socketserver
 import sys
 import threading
 import time
@@ -106,6 +107,24 @@ class VectraHTTPServer(ThreadingHTTPServer):
         if ":" in address[0]:
             self.address_family = socket.AF_INET6
         super().__init__(address, VectraRequestHandler)
+
+    def server_bind(self) -> None:
+        """Bind without asking a resolver what the bound address is called.
+
+        The base class fills ``server_name`` in from :func:`socket.getfqdn`,
+        which is a reverse lookup issued after the socket is bound and before
+        it is listening. A dashcam runs where there is nothing to answer it --
+        no uplink, and often no clock to validate one with -- so the call sits
+        there for the resolver's timeout, and the UI is unreachable for every
+        second of it. The name it produces is only ever read back into CGI
+        variables this server does not serve, so the address itself does.
+        """
+        socketserver.TCPServer.server_bind(self)
+        host, port = self.server_address[:2]
+        # Narrowed rather than converted: the address family is pinned to
+        # AF_INET or AF_INET6 above, and both carry a textual host.
+        self.server_name = cast("str", host)
+        self.server_port = port
 
     def handle_error(self, request: Any, client_address: Any) -> None:
         """Report a failed request without treating a hang-up as a fault.

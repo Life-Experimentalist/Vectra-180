@@ -12,6 +12,7 @@ these tests flaky for no gain.
 from __future__ import annotations
 
 import json
+import socket
 import threading
 import time
 from collections.abc import Callable, Iterator
@@ -1114,6 +1115,34 @@ def test_a_public_bind_with_a_token_is_quiet(config: EngineConfig, caplog: pytes
         serve(cast("Engine", engine), config, block=False)
 
     assert "no token set" not in caplog.text
+
+
+def test_binding_asks_no_resolver_what_the_address_is_called(
+    config: EngineConfig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A car has no DNS, and the base class blocks on a reverse lookup at bind.
+
+    ``HTTPServer.server_bind`` resolves the bound address into a hostname
+    between binding the socket and listening on it, so a resolver that never
+    answers holds the UI down for its whole timeout -- on a machine that has
+    no uplink by design. Nothing here reads the name back.
+    """
+
+    def _refuse(*args: object, **kwargs: object) -> str:
+        raise AssertionError("bind asked a resolver to name the address")
+
+    monkeypatch.setattr(socket, "getfqdn", _refuse)
+    monkeypatch.setattr(socket, "gethostbyaddr", _refuse)
+    config.server.host = "127.0.0.1"
+    config.server.port = 0
+    engine = StubEngine(config)
+
+    server = serve(cast("Engine", engine), config, block=False)
+    try:
+        assert server.server_name == "127.0.0.1"
+    finally:
+        server.shutdown()
+        server.server_close()
 
 
 def test_an_ipv6_host_binds_on_an_ipv6_socket(config: EngineConfig) -> None:
