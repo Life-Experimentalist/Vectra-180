@@ -9,7 +9,7 @@
 
 # --- build the wheel -------------------------------------------------------
 
-FROM python:3.12-slim-bookworm AS builder
+FROM python:3.14-slim-bookworm AS builder
 
 WORKDIR /build
 RUN pip install --no-cache-dir uv==0.5.11
@@ -23,7 +23,7 @@ RUN uv build --wheel --out-dir /dist
 
 # --- runtime ---------------------------------------------------------------
 
-FROM python:3.12-slim-bookworm AS runtime
+FROM python:3.14-slim-bookworm AS runtime
 
 LABEL org.opencontainers.image.title="Vectra-180" \
       org.opencontainers.image.description="Dual-fisheye dashcam and stereoscopic depth engine" \
