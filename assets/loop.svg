@@ -1,0 +1,81 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 300" width="100%" height="100%" role="img"
+     aria-label="Loop recording: segments accumulate in normal/ and are pruned oldest-first against a size budget, while an incident moves one segment into events/, which the loop never prunes">
+  <title>Loop recording and incident lock</title>
+
+  <defs>
+    <linearGradient id="loopBg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0B0F19" />
+      <stop offset="100%" stop-color="#1E2640" />
+    </linearGradient>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#FBBF24" />
+    </marker>
+  </defs>
+
+  <style>
+    /* Two things move, because two things happen: the newest segment is being
+       written, and the oldest is being reclaimed. Everything reads at rest, so
+       a reader who has asked for less motion loses the animation and not the
+       diagram. */
+    @media (prefers-reduced-motion: reduce) {
+      * { animation: none !important; }
+    }
+
+    .pruning { animation: fade 6s ease-in-out infinite; }
+    .writing { animation: hold 2.4s ease-in-out infinite; }
+    .locked  { animation: hold 2.4s ease-in-out infinite; animation-delay: 1.2s; }
+    .drop    { stroke-dasharray: 6 6; animation: flow 1.2s linear infinite; }
+
+    @keyframes fade { 0%   { opacity: .85; }
+                      55%  { opacity: .10; }
+                      70%  { opacity: .10; }
+                      100% { opacity: .85; } }
+    @keyframes hold { 0%,100% { opacity: 1; } 50% { opacity: .5; } }
+    @keyframes flow { to { stroke-dashoffset: -24; } }
+  </style>
+
+  <rect width="800" height="300" rx="16" fill="url(#loopBg)" />
+  <rect width="798" height="298" x="1" y="1" rx="15" fill="none" stroke="#334155" stroke-width="2" />
+
+  <text x="40" y="48" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13" fill="#94A3B8">
+    normal/ &#8212; one clip per recording.segment_seconds
+  </text>
+
+  <g transform="translate(40, 64)">
+    <rect class="pruning" x="0"   y="0" width="70" height="54" rx="6" fill="#0EA5E9" />
+    <g fill="#0EA5E9" opacity="0.85">
+      <rect x="80"  y="0" width="70" height="54" rx="6" />
+      <rect x="160" y="0" width="70" height="54" rx="6" />
+      <rect x="240" y="0" width="70" height="54" rx="6" />
+      <rect x="320" y="0" width="70" height="54" rx="6" />
+      <rect x="400" y="0" width="70" height="54" rx="6" />
+      <rect x="480" y="0" width="70" height="54" rx="6" />
+    </g>
+    <rect x="560" y="0" width="70" height="54" rx="6" fill="#0EA5E9" opacity="0.85" />
+    <rect class="writing" x="558" y="-2" width="74" height="58" rx="8" fill="none" stroke="#00F2FE" stroke-width="3" />
+
+    <text x="0" y="76" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="11" fill="#64748B">
+      oldest &#183; reclaimed first
+    </text>
+    <text x="630" y="76" text-anchor="end" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="11" fill="#00F2FE">
+      writing now
+    </text>
+  </g>
+
+  <path class="drop" d="M 395,152 L 395,204" stroke="#FBBF24" stroke-width="2" fill="none" marker-end="url(#arrow)" />
+  <text x="412" y="178" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="12" fill="#FBBF24">
+    incident.threshold_g exceeded
+  </text>
+
+  <text x="40" y="196" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13" fill="#94A3B8">
+    events/ &#8212; never pruned
+  </text>
+
+  <g transform="translate(40, 210)">
+    <rect class="locked" x="320" y="0" width="70" height="54" rx="6" fill="#FBBF24" opacity="0.9" />
+    <rect x="320" y="0" width="70" height="54" rx="6" fill="none" stroke="#FBBF24" stroke-width="2" />
+    <text x="0" y="72" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="11" fill="#64748B">
+      reclaimed only against recording.max_event_bytes, oldest first
+    </text>
+  </g>
+</svg>
