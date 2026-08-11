@@ -36,5 +36,14 @@ updates:
     schedule:
       interval: "weekly"
       day: "monday"
+    ignore:
+      # The image has to run an interpreter the test matrix actually covers,
+      # and the matrix tops out where the classifiers do. Left alone,
+      # Dependabot proposes each new Python the day it is tagged -- which
+      # would ship the appliance on a version nothing here has ever run, and
+      # ahead of the OpenCV and NumPy wheels it needs. Raise this once the
+      # matrix and the classifiers move.
+      - dependency-name: "python"
+        versions: [">=3.14"]
     labels:
       - "dependencies"
