@@ -685,10 +685,15 @@ def test_ctrl_break_is_handled_where_it_exists(
 ) -> None:
     """Left unhandled, Ctrl-Break kills the process mid-segment."""
     del engines, servers
+    # Reached through getattr for the same reason the code under test does it:
+    # the name does not exist off Windows, and a type checker run on Linux --
+    # which is where CI runs it -- rejects the attribute outright.
+    sigbreak = getattr(signal, "SIGBREAK", None)
 
     main(run_argv)
 
-    assert signal.SIGBREAK in handlers
+    assert sigbreak is not None
+    assert sigbreak in handlers
 
 
 def test_a_platform_without_sigterm_still_runs(
