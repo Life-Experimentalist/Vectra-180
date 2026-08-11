@@ -262,7 +262,9 @@ class StatusProbe:
         self.port = port
         self.status: Any = None
         self.attempts = 0
+        self.connections = 0
         self.last_error: BaseException | None = None
+        self.last_error_after = 0.0
         self.stopped = threading.Event()
         self.thread = threading.Thread(target=self._poll, name=f"status-probe-{port}", daemon=True)
 
@@ -273,8 +275,16 @@ class StatusProbe:
         deadline = time.monotonic() + self.TIMEOUT
         while not self.stopped.is_set() and time.monotonic() < deadline:
             self.attempts += 1
+            started = time.monotonic()
             client = Client(self.port, timeout=self.ATTEMPT_TIMEOUT)
             try:
+                # Connecting on its own line so a socket that never opened can
+                # be told apart from one that opened and was answered by
+                # nobody. Rolled into the request they raise the same OSError,
+                # and the two mean opposite things: not listening yet, versus
+                # listening and stuck.
+                client.connection.connect()
+                self.connections += 1
                 self.status = client.json("/api/status")
                 return
             except Exception as exc:
@@ -283,6 +293,7 @@ class StatusProbe:
                 # to propagate it would kill this thread in silence and the
                 # test would fail with no more to say than "nothing answered".
                 self.last_error = exc
+                self.last_error_after = time.monotonic() - started
                 self.stopped.wait(0.05)
             finally:
                 client.close()
@@ -299,7 +310,8 @@ class StatusProbe:
         if self.status is None:
             raise AssertionError(
                 f"nothing answered on port {self.port} while the run was up: "
-                f"{self.attempts} attempt(s), last error {self.last_error!r}"
+                f"{self.attempts} attempt(s), {self.connections} of them connected, "
+                f"last error {self.last_error!r} after {self.last_error_after:.2f}s"
                 + (", probe still running" if self.thread.is_alive() else "")
             )
         return self.status
