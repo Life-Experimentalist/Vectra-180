@@ -327,8 +327,8 @@ Background load matters too — a system update running mid-drive is enough.
 
 ```
 [warn] pipeline: 19.4 fps captured, prepared and encoded together (30 requested)
-         -> the whole pipeline is slower than the camera alone, so clips play faster
-            than real time and their sidecars are marked discontinuous. Lower
+         -> the whole pipeline is slower than the rate the clips claim, so they play
+            faster than real time and their sidecars are marked discontinuous. Lower
             recording.scale to encode fewer pixels, or set recording.fps to about 19
             so the clip header matches what is recorded
 ```
@@ -367,6 +367,15 @@ fps = 19  # 0, the default, follows whatever the camera reports
 
 It changes only the number in the header. Frames are still captured and written
 as fast as the machine manages, so nothing is thrown away by setting it.
+
+Once it is set, `pipeline` measures against it rather than against `camera.fps`,
+so a machine that sustains the rate it declares reports `ok` — the check names
+the camera's request alongside it, because the module is still offering more
+than this machine takes from it:
+
+```
+[ ok ] pipeline: 19.4 fps captured, prepared and encoded together (19 requested), from a camera asked for 30
+```
 
 ---
 

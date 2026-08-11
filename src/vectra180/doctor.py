@@ -584,11 +584,24 @@ def _check_pipeline(report: Report, config: EngineConfig) -> None:
         return
 
     rate = written / covered
-    detail = f"{rate:.1f} fps captured, prepared and encoded together ({config.camera.fps} requested)"
+    # Measured against the rate the clips will *declare*, not the rate the
+    # camera was asked for. Those differ exactly when the operator has already
+    # answered this check: recording.fps is what the header carries, so once it
+    # is set the footage is real time at that rate and there is nothing left to
+    # report. Comparing against camera.fps here would fail a machine that has
+    # done what this check told it to -- and on a CM5 feeding a 4000x1200
+    # module, that configuration is the correct one rather than a compromise.
+    target = config.recording.fps or config.camera.fps
+    detail = f"{rate:.1f} fps captured, prepared and encoded together ({target:g} requested)"
+    if config.recording.fps and config.recording.fps < config.camera.fps:
+        # Said plainly rather than left to be inferred: the clips are honest
+        # about their rate, and the camera is still offering more than this
+        # machine takes from it.
+        detail += f", from a camera asked for {config.camera.fps}"
     if dropped:
         detail += f", {dropped} frame(s) dropped"
 
-    if rate >= config.camera.fps * _RATE_TOLERANCE:
+    if rate >= target * _RATE_TOLERANCE:
         report.add("pipeline", OK, detail)
         return
 
@@ -600,11 +613,11 @@ def _check_pipeline(report: Report, config: EngineConfig) -> None:
     # it is only a request, and a driver that reports the mode it opened in
     # puts its own figure in the header regardless of what was asked for.
     remedy = (
-        f"the whole pipeline is slower than the camera alone, so clips play faster than real time "
+        f"the whole pipeline is slower than the rate the clips claim, so they play faster than real time "
         f"and their sidecars are marked discontinuous. Lower recording.scale to encode fewer pixels, "
         f"or set recording.fps to about {rate:.0f} so the clip header matches what is recorded"
     )
-    report.add("pipeline", WARN if rate >= config.camera.fps * 0.5 else FAIL, detail, remedy)
+    report.add("pipeline", WARN if rate >= target * 0.5 else FAIL, detail, remedy)
 
 
 def _check_server(report: Report, config: EngineConfig) -> None:

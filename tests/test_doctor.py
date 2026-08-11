@@ -1118,12 +1118,59 @@ def test_a_pipeline_slower_than_the_camera_warns(
     check = named(report, "pipeline")
     assert check.status == WARN
     assert "20.0 fps" in check.detail
-    assert "clips play faster than real time" in check.remedy
+    assert "play faster than real time" in check.remedy
     # recording.fps, not camera.fps: the latter is only a request, and a driver
     # that reports the mode it opened in puts its own figure in the header
     # whatever was asked for -- so naming it here would be advice that does not
     # work on the very hardware that provokes the warning.
     assert "recording.fps to about 20" in check.remedy
+
+
+def test_a_declared_rate_the_machine_sustains_is_not_a_failure(
+    report: Report, config: EngineConfig, engines: Any, clock: Any
+) -> None:
+    """Doing what the warning above says has to clear the warning.
+
+    ``recording.fps`` is what the clip header carries, so a machine that
+    sustains the rate it declares is recording real time -- there is nothing
+    left for this check to report. Measured against ``camera.fps`` instead, the
+    operator who took the advice would be told the same thing forever, and on a
+    CM5 feeding a 4000x1200 module that configuration is the right one rather
+    than a compromise to be nagged about.
+
+    The camera's own request is still named, because the module is offering
+    more than this machine is taking from it and that is worth knowing.
+    """
+    config.recording.fps = 20.0
+    clock(0.0)
+    engines(written=100)
+
+    _check_pipeline(report, config)
+
+    check = named(report, "pipeline")
+    assert check.status == OK
+    assert check.detail == "20.0 fps captured, prepared and encoded together (20 requested), from a camera asked for 30"
+
+
+def test_a_declared_rate_the_machine_still_misses_warns(
+    report: Report, config: EngineConfig, engines: Any, clock: Any
+) -> None:
+    """Declaring a rate is not the same as reaching it.
+
+    Clips still play faster than the road went by, so the advice is to declare
+    a lower one -- and the figure offered is the rate that was measured, not
+    the one that was already tried and missed.
+    """
+    config.recording.fps = 20.0
+    clock(0.0)
+    engines(written=75)
+
+    _check_pipeline(report, config)
+
+    check = named(report, "pipeline")
+    assert check.status == WARN
+    assert "15.0 fps" in check.detail
+    assert "recording.fps to about 15" in check.remedy
 
 
 def test_a_pipeline_at_half_the_rate_fails(report: Report, config: EngineConfig, engines: Any, clock: Any) -> None:
