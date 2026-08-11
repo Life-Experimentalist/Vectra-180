@@ -211,7 +211,7 @@ class Client:
         self.connection.close()
 
 
-class StatusProbe(threading.Thread):
+class StatusProbe:
     """Fetch ``/api/status`` from outside a run, and remember why not.
 
     The command binds its socket somewhere inside a call the test thread cannot
@@ -225,6 +225,11 @@ class StatusProbe(threading.Thread):
     The request timeout is deliberately short. A handler starved of CPU by the
     encoder would otherwise sit inside one attempt for longer than the run
     lasts, which reads from outside exactly like a server that never started.
+
+    A thread is held rather than subclassed. :class:`threading.Thread` keeps its
+    own state in underscore-prefixed attributes, and which names those are has
+    changed between the versions in the test matrix -- a subclass that picks one
+    of them fails on some interpreters and not others.
     """
 
     #: Seconds to keep trying. Only reached if nothing ever answers, because
@@ -236,16 +241,19 @@ class StatusProbe(threading.Thread):
     ATTEMPT_TIMEOUT = 2.0
 
     def __init__(self, port: int) -> None:
-        super().__init__(daemon=True, name=f"status-probe-{port}")
         self.port = port
         self.status: Any = None
         self.attempts = 0
         self.last_error: BaseException | None = None
-        self._stop = threading.Event()
+        self.stopped = threading.Event()
+        self.thread = threading.Thread(target=self._poll, name=f"status-probe-{port}", daemon=True)
 
-    def run(self) -> None:
+    def start(self) -> None:
+        self.thread.start()
+
+    def _poll(self) -> None:
         deadline = time.monotonic() + self.TIMEOUT
-        while not self._stop.is_set() and time.monotonic() < deadline:
+        while not self.stopped.is_set() and time.monotonic() < deadline:
             self.attempts += 1
             client = Client(self.port, timeout=self.ATTEMPT_TIMEOUT)
             try:
@@ -257,7 +265,7 @@ class StatusProbe(threading.Thread):
                 # to propagate it would kill this thread in silence and the
                 # test would fail with no more to say than "nothing answered".
                 self.last_error = exc
-                self._stop.wait(0.05)
+                self.stopped.wait(0.05)
             finally:
                 client.close()
 
@@ -268,13 +276,13 @@ class StatusProbe(threading.Thread):
         nothing left to wait for and the probe is wound down rather than left
         to burn through its remaining deadline.
         """
-        self._stop.set()
-        self.join(timeout=self.ATTEMPT_TIMEOUT + 5.0)
+        self.stopped.set()
+        self.thread.join(timeout=self.ATTEMPT_TIMEOUT + 5.0)
         if self.status is None:
             raise AssertionError(
                 f"nothing answered on port {self.port} while the run was up: "
                 f"{self.attempts} attempt(s), last error {self.last_error!r}"
-                + (", probe still running" if self.is_alive() else "")
+                + (", probe still running" if self.thread.is_alive() else "")
             )
         return self.status
 
