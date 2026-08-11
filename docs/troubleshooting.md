@@ -432,6 +432,14 @@ enabled = false
 That stops `doctor` warning about it, and stops the crop taking pixels off the
 left of every frame.
 
+**Look at those columns before you switch it off.** Some modules emit no IMU
+block but still put a dead border there — a flat bar that never changes between
+frames — and `enabled = false` puts it back into every recorded frame. Compare
+two stills: if the leading columns are identical in both while the rest of the
+picture moved, they are a border. Leave `enabled = true` and set
+`metadata_width` to the border's width, so it keeps being cropped. The warning
+stays, and it is the honest thing for `doctor` to say: there is no telemetry.
+
 ### A stripe of noise down the left edge of every clip
 
 `telemetry.metadata_width` is smaller than the real strip. The leftover columns

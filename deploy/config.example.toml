@@ -76,9 +76,14 @@ read_failure_limit = 30
 # ---------------------------------------------------------------------------
 
 # Decode the ICM42688 IMU block the module embeds in the leftmost pixel
-# column. Turning this off costs the horizon overlay and the g-sensor;
-# recording is unaffected. Modules without an IMU are detected automatically,
-# so there is no need to set this for them.
+# column. This switch also gates the crop below, so turning it off costs the
+# horizon overlay and the g-sensor *and* leaves those columns in the picture.
+#
+# A module that embeds no block is detected -- `doctor` says so and nothing
+# bogus reaches the HUD -- but the crop is not decided for you, because the
+# right answer depends on what is actually in those columns. If they are a dead
+# border the sensor emits, leave this on to have them removed; set it false only
+# if they are ordinary picture, which cropping would throw away.
 enabled = true
 
 # Width of the metadata strip, in pixels. Those columns are cropped off every
