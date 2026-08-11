@@ -171,6 +171,17 @@ class Client:
         return json.loads(self.get(path, **headers).read())
 
     def close(self) -> None:
+        # Closing the connection is not enough to close the socket. A response
+        # with no length ends at the close, so ``getresponse`` hands the socket
+        # to it and closes the connection there and then -- but the response's
+        # file object still holds a reference to the descriptor, and CPython
+        # defers the real close until that is released. Without this the server
+        # keeps writing into a buffer nobody reads, never sees a broken pipe,
+        # and only stops once the buffer is full: two seconds on Windows,
+        # longer than the test's patience on a Linux runner.
+        if self._pending is not None:
+            self._pending.close()
+            self._pending = None
         self.connection.close()
 
 

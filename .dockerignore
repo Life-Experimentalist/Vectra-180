@@ -32,3 +32,6 @@ docker-compose.yml
 Makefile
 *.md
 !README.md
+# hatchling's license-files points at this one, so the wheel build needs it in
+# the context even though nothing at runtime reads it.
+!LICENSE.md
