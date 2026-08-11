@@ -12,16 +12,13 @@ from __future__ import annotations
 import json
 import signal
 import socket
-import threading
-import time
 from collections.abc import Iterator
 from pathlib import Path
-from typing import Any
 
 import cv2
 import pytest
 
-from tests.integration.conftest import Client, ReplaySource, free_port, level_run
+from tests.integration.conftest import ReplaySource, StatusProbe, free_port, level_run
 from vectra180 import engine as engine_module
 from vectra180.cli import _to_toml, main
 from vectra180.config import EngineConfig
@@ -116,16 +113,13 @@ def test_run_serves_the_api_while_recording_and_frees_the_port_afterwards(
     of the last run turns one crash into a service that never comes back.
     """
     port = free_port()
-    seen: list[Any] = []
-    probe = threading.Thread(target=_poll_status, args=(port, seen), daemon=True)
+    probe = StatusProbe(port)
     probe.start()
 
     exit_code = main(["run", "--duration", str(RUN_SECONDS), "--port", str(port), "--config", str(config_file)])
-    probe.join(timeout=5.0)
 
     assert exit_code == 0
-    assert seen, f"nothing answered on port {port} while the run was up"
-    status = seen[0]
+    status = probe.result()
     assert status["running"] is True
     assert status["recorder"]["written_frames"] > 0
     assert status["camera"]["backend"] == "REPLAY"
@@ -147,37 +141,16 @@ def test_run_with_recording_off_serves_a_live_view_and_writes_nothing(
     while leaving the recorder untouched.
     """
     port = free_port()
-    seen: list[Any] = []
-    probe = threading.Thread(target=_poll_status, args=(port, seen), daemon=True)
+    probe = StatusProbe(port)
     probe.start()
 
     exit_code = main(
         ["run", "--no-record", "--duration", str(RUN_SECONDS), "--port", str(port), "--config", str(config_file)]
     )
-    probe.join(timeout=5.0)
 
     assert exit_code == 0
-    assert seen, f"nothing answered on port {port} while the run was up"
-    assert seen[0]["running"] is True
-    assert seen[0]["frames"] > 0
-    assert seen[0]["recorder"]["written_frames"] == 0
+    status = probe.result()
+    assert status["running"] is True
+    assert status["frames"] > 0
+    assert status["recorder"]["written_frames"] == 0
     assert storage.list_clips(config.recording) == []
-
-
-def _poll_status(port: int, sink: list[Any], *, timeout: float = 20.0) -> None:
-    """Fetch ``/api/status`` once the server is up, from outside the run.
-
-    Retrying rather than waiting on an event because there is nothing to wait
-    on: the command binds its socket somewhere inside a call this thread cannot
-    see into, and a refused connection is the only signal that it has not yet.
-    """
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        client = Client(port)
-        try:
-            sink.append(client.json("/api/status"))
-            return
-        except OSError:
-            time.sleep(0.05)
-        finally:
-            client.close()

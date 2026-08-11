@@ -181,8 +181,8 @@ class Client:
     exactly those things.
     """
 
-    def __init__(self, port: int) -> None:
-        self.connection = HTTPConnection("127.0.0.1", port, timeout=15.0)
+    def __init__(self, port: int, *, timeout: float = 15.0) -> None:
+        self.connection = HTTPConnection("127.0.0.1", port, timeout=timeout)
         self._pending: HTTPResponse | None = None
 
     def request(self, method: str, path: str, **headers: str) -> HTTPResponse:
@@ -209,6 +209,74 @@ class Client:
 
     def close(self) -> None:
         self.connection.close()
+
+
+class StatusProbe(threading.Thread):
+    """Fetch ``/api/status`` from outside a run, and remember why not.
+
+    The command binds its socket somewhere inside a call the test thread cannot
+    see into, so the only way to catch the server while it is up is to retry
+    from another thread until something answers. Retrying blindly is what makes
+    this worth a class: a probe that swallows every failure and reports an
+    empty list cannot tell a port that was never bound from a response that
+    never came, and the difference is the whole diagnosis. Every attempt and
+    the last exception are kept so the assertion can say which it was.
+
+    The request timeout is deliberately short. A handler starved of CPU by the
+    encoder would otherwise sit inside one attempt for longer than the run
+    lasts, which reads from outside exactly like a server that never started.
+    """
+
+    #: Seconds to keep trying. Only reached if nothing ever answers, because
+    #: :meth:`result` stops the probe as soon as the run under test is over.
+    TIMEOUT = 20.0
+
+    #: Seconds one attempt may take. Short enough that a stalled request is
+    #: reported as a stall rather than mistaken for silence.
+    ATTEMPT_TIMEOUT = 2.0
+
+    def __init__(self, port: int) -> None:
+        super().__init__(daemon=True, name=f"status-probe-{port}")
+        self.port = port
+        self.status: Any = None
+        self.attempts = 0
+        self.last_error: BaseException | None = None
+        self._stop = threading.Event()
+
+    def run(self) -> None:
+        deadline = time.monotonic() + self.TIMEOUT
+        while not self._stop.is_set() and time.monotonic() < deadline:
+            self.attempts += 1
+            client = Client(self.port, timeout=self.ATTEMPT_TIMEOUT)
+            try:
+                self.status = client.json("/api/status")
+                return
+            except Exception as exc:
+                # Anything at all: a refused connection while the server is
+                # still coming up, a timeout, or a body that is not JSON. Left
+                # to propagate it would kill this thread in silence and the
+                # test would fail with no more to say than "nothing answered".
+                self.last_error = exc
+                self._stop.wait(0.05)
+            finally:
+                client.close()
+
+    def result(self) -> Any:
+        """The status the run served, or an assertion that says what went wrong.
+
+        Call once the run is over: the server is gone by then, so there is
+        nothing left to wait for and the probe is wound down rather than left
+        to burn through its remaining deadline.
+        """
+        self._stop.set()
+        self.join(timeout=self.ATTEMPT_TIMEOUT + 5.0)
+        if self.status is None:
+            raise AssertionError(
+                f"nothing answered on port {self.port} while the run was up: "
+                f"{self.attempts} attempt(s), last error {self.last_error!r}"
+                + (", probe still running" if self.is_alive() else "")
+            )
+        return self.status
 
 
 @pytest.fixture
