@@ -113,7 +113,11 @@ def test_run_serves_the_api_while_recording_and_frees_the_port_afterwards(
     of the last run turns one crash into a service that never comes back.
     """
     port = free_port()
-    probe = StatusProbe(port)
+    # Waiting for a written frame rather than for any answer at all: the socket
+    # is up before the first frame has reached the encoder, so the earliest
+    # reply would show a recorder that has done nothing yet and prove only that
+    # the two started, not that they ran together.
+    probe = StatusProbe(port, until=lambda status: status["recorder"]["written_frames"] > 0)
     probe.start()
 
     exit_code = main(["run", "--duration", str(RUN_SECONDS), "--port", str(port), "--config", str(config_file)])
@@ -141,7 +145,9 @@ def test_run_with_recording_off_serves_a_live_view_and_writes_nothing(
     while leaving the recorder untouched.
     """
     port = free_port()
-    probe = StatusProbe(port)
+    # Same race as the recording case, one stage earlier: the server answers
+    # before the capture loop has produced anything to show.
+    probe = StatusProbe(port, until=lambda status: status["frames"] > 0)
     probe.start()
 
     exit_code = main(

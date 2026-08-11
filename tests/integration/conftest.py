@@ -258,9 +258,16 @@ class StatusProbe:
     #: reported as a stall rather than mistaken for silence.
     ATTEMPT_TIMEOUT = 2.0
 
-    def __init__(self, port: int) -> None:
+    def __init__(self, port: int, *, until: Callable[[Any], bool] | None = None) -> None:
         self.port = port
+        #: What the run has to be doing before an answer counts. The socket is
+        #: up before the first frame reaches the encoder, so a probe that keeps
+        #: whatever came back first proves only that the server answered --
+        #: not that it answered while the thing under test was happening.
+        self.until = until or (lambda _status: True)
         self.status: Any = None
+        self.last_status: Any = None
+        self.answers = 0
         self.attempts = 0
         self.connections = 0
         self.last_error: BaseException | None = None
@@ -285,8 +292,12 @@ class StatusProbe:
                 # listening and stuck.
                 client.connection.connect()
                 self.connections += 1
-                self.status = client.json("/api/status")
-                return
+                self.last_status = client.json("/api/status")
+                self.answers += 1
+                if self.until(self.last_status):
+                    self.status = self.last_status
+                    return
+                self.stopped.wait(0.05)
             except Exception as exc:
                 # Anything at all: a refused connection while the server is
                 # still coming up, a timeout, or a body that is not JSON. Left
@@ -307,14 +318,20 @@ class StatusProbe:
         """
         self.stopped.set()
         self.thread.join(timeout=self.ATTEMPT_TIMEOUT + 5.0)
-        if self.status is None:
+        if self.status is not None:
+            return self.status
+        still_running = ", probe still running" if self.thread.is_alive() else ""
+        if self.answers:
             raise AssertionError(
-                f"nothing answered on port {self.port} while the run was up: "
-                f"{self.attempts} attempt(s), {self.connections} of them connected, "
-                f"last error {self.last_error!r} after {self.last_error_after:.2f}s"
-                + (", probe still running" if self.thread.is_alive() else "")
+                f"port {self.port} answered {self.answers} time(s) while the run was up, "
+                f"but never in the state the test waited for; last was "
+                f"{json.dumps(self.last_status)}{still_running}"
             )
-        return self.status
+        raise AssertionError(
+            f"nothing answered on port {self.port} while the run was up: "
+            f"{self.attempts} attempt(s), {self.connections} of them connected, "
+            f"last error {self.last_error!r} after {self.last_error_after:.2f}s{still_running}"
+        )
 
 
 @pytest.fixture
