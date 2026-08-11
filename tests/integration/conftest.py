@@ -11,8 +11,11 @@ Replaying rather than waiting
 Every clock the pipeline reads comes off the frame, not off the wall: the
 recorder rolls a segment on ``frame.monotonic`` and names the file from
 ``frame.wall_time``. :class:`ReplaySource` advances both synthetically, so a
-test can cover a minute of footage in a fraction of a second without dropping
+test can cover a minute of footage in a few seconds without dropping
 ``recording.segment_seconds`` below the five the config validator allows.
+
+How much faster than the wall depends on whether the run ends by itself; see
+:data:`LOOP_SPEEDUP`.
 """
 
 from __future__ import annotations
@@ -50,6 +53,20 @@ REPLAY_FPS = 30.0
 #: behind a bounded queue, and a producer that never yields would fill it and
 #: turn most of the run into dropped frames.
 PACE = 0.001
+
+#: How much faster than real time a looping source runs.
+#:
+#: A scripted run is bounded by its script, so it can be replayed as fast as
+#: the machine allows and be over in a moment. A looping one is bounded only by
+#: the test around it, and at :data:`PACE` that is a thousand frames a second
+#: through the whole pipeline -- thirty times what the camera it stands in for
+#: delivers, sustained for as long as the test runs. Two hot Python loops at
+#: that rate hold the interpreter lock almost continuously, and on a small
+#: runner the HTTP thread is starved long enough that a request times out,
+#: which from outside is indistinguishable from a server that never started.
+#: Fast enough here to cover several segments a second, slow enough to leave
+#: the machine the headroom a real one has.
+LOOP_SPEEDUP = 8.0
 
 #: A stationary, level module.
 LEVEL = (0.0, 0.0, 1.0)
@@ -90,6 +107,7 @@ class ReplaySource:
         self.script = list(script)
         self.telemetry = telemetry
         self.loop = loop
+        self.pace = 1.0 / (REPLAY_FPS * LOOP_SPEEDUP) if loop else PACE
         self.fps = REPLAY_FPS
         self.opened = False
         self.closed = False
@@ -140,7 +158,7 @@ class ReplaySource:
                 raise AssertionError("the replay source was never armed")
             yield self._frame(index)
             self.read_count += 1
-            time.sleep(PACE)
+            time.sleep(self.pace)
 
     # -- internals ---------------------------------------------------------
 
