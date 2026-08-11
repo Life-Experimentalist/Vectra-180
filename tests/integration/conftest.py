@@ -54,6 +54,28 @@ REPLAY_FPS = 30.0
 #: turn most of the run into dropped frames.
 PACE = 0.001
 
+#: How many replayed frames a scripted run may leave unencoded before it waits.
+#:
+#: A sleep alone does not pace a replay against the pipeline. The encoder is a
+#: subprocess, and spawning one -- three times over a run that rolls three
+#: segments -- costs far more on a loaded CI runner than the tenth of a second
+#: it takes to push a whole script through at :data:`PACE`. The queue fills
+#: while the writer is still starting, the rest of the script is dropped on the
+#: floor, and a run scripted to roll three segments quietly produces two.
+#:
+#: Waiting on the written count instead makes the replay behave like the camera
+#: it stands in for: a real module hands over thirty frames a second and the
+#: encoder keeps up, so nothing is dropped. Kept below the recorder's queue
+#: depth (``fps * queue_seconds``, 60 frames at the fixture's rate) so the
+#: queue has room for the backlog and never has to drop.
+SCRIPT_BACKLOG = 30
+
+#: Seconds a scripted replay waits for the encoder before giving up on pacing.
+#: Reached only if the pipeline has genuinely stalled, and then the run is
+#: allowed to finish so the test fails on its own assertions rather than
+#: hanging until the suite times out.
+SCRIPT_BACKLOG_TIMEOUT = 30.0
+
 #: How much faster than real time a looping source runs.
 #:
 #: A scripted run is bounded by its script, so it can be replayed as fast as
@@ -115,6 +137,12 @@ class ReplaySource:
         #: Held shut until the caller has started the recorder, so a short
         #: script cannot run out before there is anything to record into.
         self.armed = threading.Event()
+        #: Recorder to pace a scripted run against, set by the caller once the
+        #: engine exists. Left unset the source runs on :attr:`pace` alone,
+        #: which is what a looping source wants: it is bounded by the test
+        #: around it rather than by a script, and the drops it takes under that
+        #: load are not what those tests are asserting on.
+        self.recorder: Any = None
         self._base = make_frame()
         self._origin = time.monotonic()
 
@@ -158,9 +186,20 @@ class ReplaySource:
                 raise AssertionError("the replay source was never armed")
             yield self._frame(index)
             self.read_count += 1
-            time.sleep(self.pace)
+            self._wait_for(index)
 
     # -- internals ---------------------------------------------------------
+
+    def _wait_for(self, index: int) -> None:
+        """Hold the next frame back until the encoder has room for it."""
+        time.sleep(self.pace)
+        if self.loop or self.recorder is None:
+            return
+        deadline = time.monotonic() + SCRIPT_BACKLOG_TIMEOUT
+        while index - self.recorder.stats.written_frames > SCRIPT_BACKLOG:
+            if not self.recorder.running or time.monotonic() > deadline:
+                return
+            time.sleep(0.001)
 
     def _frame(self, index: int) -> Frame:
         image = self._base.copy()

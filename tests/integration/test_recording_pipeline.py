@@ -37,6 +37,10 @@ def replay(config: EngineConfig, source: ReplaySource, monkeypatch: pytest.Monke
     """
     monkeypatch.setattr(engine_module, "CameraSource", lambda _config: source)
     engine = Engine(config)
+    # Replay at the speed the pipeline can take it rather than at the speed the
+    # loop can produce it, so which segments a scripted run rolls is decided by
+    # the script and not by how loaded the machine is.
+    source.recorder = engine.recorder
     engine.start()
     engine.begin_recording()
     source.armed.set()
@@ -44,6 +48,15 @@ def replay(config: EngineConfig, source: ReplaySource, monkeypatch: pytest.Monke
     finished = wait_until(lambda: not engine.running, timeout=60.0)
     engine.stop(timeout=15.0)
     assert finished, "the capture thread outlived its script"
+    # Stated here because every assertion below rests on it: which segments a
+    # script rolls, and which of them an impact protects, are only decided by
+    # the script while the whole script reaches the encoder. A run that dropped
+    # frames has failed at something the tests would otherwise report as a
+    # miscounted segment.
+    assert engine.recorder.stats.dropped_frames == 0, (
+        f"the replay outran the encoder: {engine.recorder.stats.dropped_frames} frame(s) dropped "
+        f"of {source.read_count} replayed"
+    )
     return engine
 
 
