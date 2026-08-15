@@ -81,8 +81,8 @@ Look for an **MJPG** entry at the side-by-side resolution you want, with the
 frame rate you want beside it. A dual-fisheye module usually reports one wide
 frame holding both eyes: `2560x720` is `1280x720` per eye.
 
-YUYV will be listed too, and at these sizes it will be capped around 5 fps —
-uncompressed 2560×720 at 30 fps is about 880 Mbit/s, well past the 480 Mbit/s
+YUYV will be listed too, but at these sizes it cannot carry the frame rate you
+want — uncompressed 2560×720 at 30 fps is about 880 Mbit/s, well past the 480 Mbit/s
 USB 2.0 ceiling that most UVC modules present. MJPG is what makes the mode
 possible, which is why it is the default in the config.
 
@@ -315,18 +315,11 @@ encoder at the size your camera actually produced, and writes to the recording
 directory. It is the fastest way to find out whether the install will work
 before trusting it with a drive.
 
-```
-[ ok ] environment: vectra180 1.0.0 on Linux aarch64, python 3.11.2, opencv 4.10.0, numpy 2.1.3
-[ ok ] ffmpeg: /usr/bin/ffmpeg
-[ ok ] storage: /media/footage: 412.7 GB free, 0 loop clip(s), 0 locked clip(s)
-[ ok ] service: http://0.0.0.0:8080 (network, token required)
-[ ok ] devices: v4l2[0] USB 2.0 Camera (/dev/video0) 2560x720
-[ ok ] camera: 2560x720 via v4l2, 29.8 fps measured (30 requested)
-[ ok ] telemetry: IMU present: 1.00 g total, gyro +0.00/-0.01/+0.00 rad/s
-[ ok ] encoder: FFmpegWriter at 2530x720 preset 'ultrafast': 44.2 fps (30 needed)
-
-All checks passed.
-```
+No transcript from a Compute Module 5 is reproduced here: no run on one has been
+recorded yet, so there is nothing to quote. For a real, sourced sample — a
+dual-fisheye UVC module on a Windows development machine — see
+[README § Checking a machine](../README.md#checking-a-machine), and read your
+own board's output against the per-check table there.
 
 Then watch it run:
 
@@ -422,7 +415,7 @@ curl -X POST -H "Authorization: Bearer $TOKEN" http://<pi>:8080/api/lock
 | --- | --- |
 | Service restarts in a loop | `journalctl -u vectra180 -n 50`. Usually the camera path or a config typo. |
 | `doctor` says no device responded | Camera unplugged, or the account is not in `video`. `id vectra` |
-| Capture is ~5 fps | The camera negotiated YUYV. Confirm MJPG at that size with `v4l2-ctl --list-formats-ext`. |
+| Capture is far below the requested rate | The camera negotiated YUYV. Confirm MJPG at that size with `v4l2-ctl --list-formats-ext`. |
 | Resolution is not what was asked for | The mode does not exist. `doctor` reports what the driver gave instead. |
 | `dropped_frames` climbing | Encoder or disk cannot keep up. Check `vcgencmd get_throttled`, then cooling, then `bitrate_kbps`. |
 | Read-only file system in the journal | `recording.directory` is outside `ReadWritePaths`. See [storage](#5-storage). |

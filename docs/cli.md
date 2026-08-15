@@ -135,22 +135,9 @@ flowchart TB
     PIPE --> END
 ```
 
-Sample output:
-
-```
-[ ok ] environment: vectra180 1.0.0 on Linux aarch64, python 3.11.2, opencv 4.10.0, numpy 2.1.1
-[ ok ] ffmpeg: /usr/bin/ffmpeg
-[ ok ] storage: /var/lib/vectra180/recordings: 38.4 GB free, 573 loop clip(s), 18 locked clip(s)
-[ ok ] service: http://0.0.0.0:8080 (network, token required)
-[ ok ] devices: v4l2[0] USB 3.0 Camera (/dev/video0) 2560x720
-[ ok ] camera: 2560x720 via v4l2, 29.8 fps measured (30 requested)
-[ ok ] telemetry: IMU present: 1.00 g total, gyro +0.00/-0.00/+0.01 rad/s
-[warn] encoder: FFmpegWriter at 2530x720 preset 'ultrafast': 34.2 fps (30 needed)
-         -> there is little headroom; a warm cabin or a background task could push it under
-[ ok ] pipeline: 29.4 fps captured, prepared and encoded together (30 requested)
-
-All critical checks passed with 1 warning(s).
-```
+For a real transcript — a dual-fisheye UVC module on a Windows development
+machine, with the hardware it ran on named beside it — see
+[README § Checking a machine](../README.md#checking-a-machine).
 
 Every non-`ok` line carries a remedy under it — the thing to actually do, not a
 restatement of the problem.
