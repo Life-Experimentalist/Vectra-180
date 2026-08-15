@@ -1,0 +1,32 @@
+{
+  "$schema": "https://devprune.vkrishna04.me/schemas/v1/devprune.schema.json",
+  "prunable": {
+    "directories": [
+      {
+        "path": ".venv",
+        "rebuild": "uv sync --all-extras",
+        "why": "The uv-managed virtualenv, resolved from uv.lock — `make install` runs exactly this; git-ignored via .gitignore"
+      },
+      {
+        "path": "dist",
+        "rebuild": "uv build",
+        "why": "Wheel and sdist from `make build`; the release workflow rebuilds them from source, so nothing here is an input; git-ignored via .gitignore"
+      },
+      {
+        "path": ".pytest_cache",
+        "rebuild": "uv run pytest",
+        "why": "pytest's run cache, rewritten by `make test`; git-ignored via .gitignore"
+      },
+      {
+        "path": ".mypy_cache",
+        "rebuild": "uv run mypy src tests",
+        "why": "mypy's incremental cache, rewritten by `make typecheck`; git-ignored via .gitignore"
+      },
+      {
+        "path": ".ruff_cache",
+        "rebuild": "uv run ruff check src tests",
+        "why": "ruff's incremental cache, rewritten by `make lint`; git-ignored via .gitignore"
+      }
+    ]
+  }
+}
