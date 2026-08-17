@@ -79,9 +79,9 @@ include = ["src/vectra180", "tests", "deploy", "docs", "README.md", "LICENSE.md"
 dev = [
     "pytest>=8.0",
     "pytest-cov>=5.0",
-    "ruff>=0.16.2",
+    "ruff>=0.16.3",
     "mypy>=1.11",
-    "pre-commit>=4.6.1",
+    "pre-commit>=4.6.2",
     "dearpygui>=1.11.1",
 ]
 
