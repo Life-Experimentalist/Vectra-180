@@ -1,0 +1,39 @@
+{
+	"$schema": "https://vkrishna04.me/schemas/project-manifest.schema.json",
+	"manifestVersion": 2,
+	"tagline": "A dual-fisheye dashcam for the Pi Compute Module 5.",
+	"summary": "A headless dashcam that records continuously from a dual-fisheye USB camera, protects the footage around an impact, and serves clips to a phone over Wi-Fi. Because the two lenses sit a fixed distance apart it can also compute a depth map — on request, never while a clip is being written.",
+	"status": "active",
+	"icon": "SiRaspberrypi",
+	"readme": true,
+	"technologies": [
+		"Python",
+		"Raspberry Pi CM5",
+		"systemd",
+		"UVC",
+		"OpenCV"
+	],
+	"tags": [
+		"dashcam",
+		"raspberry-pi",
+		"computer-vision",
+		"embedded",
+		"stereo-depth"
+	],
+	"highlights": [
+		"Recording is treated as the one non-optional duty: preview, depth, panorama and the web UI are all pushed off the capture thread.",
+		"Survives a camera that browns out on a bumpy road, and never fills the SD card.",
+		"Computes stereoscopic depth from the fixed-baseline dual-fisheye lenses, but only when asked, so it cannot cost frames.",
+		"Runs as a headless systemd service, and works on any Linux, macOS or Windows machine with a UVC camera — the Pi is simply where it lives in a car."
+	],
+	"links": {
+		"repo": "https://github.com/Life-Experimentalist/Vectra-180"
+	},
+	"sections": [
+		{
+			"type": "prose",
+			"heading": "One rule the architecture follows from",
+			"body": "A dashcam that drops frames while rendering a preview is not a dashcam. Every design decision here follows from making recording the duty and everything else optional: expensive work leaves the capture thread, depth is computed on request rather than continuously, and the web interface is a reader of finished clips rather than a participant in writing them."
+		}
+	]
+}
